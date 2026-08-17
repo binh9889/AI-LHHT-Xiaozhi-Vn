@@ -85,12 +85,12 @@ class MiniMaxService {
         return 'Không có phản hồi';
       } else {
         throw Exception(
-          'API 请求Thất bại: ${response.statusCode}, 响应: ${response.body}',
+          'Yêu cầu API thất bại: ${response.statusCode}. Phản hồi: ${response.body}',
         );
       }
     } catch (e) {
       print('MiniMaxService Lỗi: $e');
-      throw Exception('发送Tin nhắnThất bại: $e');
+      throw Exception('Gửi tin nhắn thất bại: $e');
     }
   }
 
@@ -188,7 +188,7 @@ class MiniMaxService {
       history.add({'role': 'assistant', 'content': cleanContent});
     } catch (e) {
       print('MiniMaxService Stream Lỗi: $e');
-      yield '【服务响应异常】';
+      yield 'Dịch vụ AI đang gặp lỗi. Vui lòng thử lại.';
     }
   }
 

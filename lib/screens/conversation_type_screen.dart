@@ -668,7 +668,7 @@ class _ConversationTypeScreenState extends State<ConversationTypeScreen> {
           const SizedBox(height: 12),
           _buildDetailItemXiaozhi(
             'Token',
-            config.token.isEmpty ? 'test-token' : config.token,
+            config.token.isEmpty ? 'Chưa có token' : '••••••••',
           ),
         ],
       ),

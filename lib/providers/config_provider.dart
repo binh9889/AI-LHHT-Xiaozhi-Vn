@@ -125,7 +125,7 @@ class ConfigProvider extends ChangeNotifier {
       clientId: clientId,
       token: (customToken != null && customToken.trim().isNotEmpty)
           ? customToken.trim()
-          : 'test-token',
+          : '',
     );
 
     _xiaozhiConfigs.add(newConfig);

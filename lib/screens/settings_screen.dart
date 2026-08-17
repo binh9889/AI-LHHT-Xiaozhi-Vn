@@ -1,314 +1,212 @@
-import 'package:flutter/material.dart';
-import 'xiaozhi_official_setup_screen.dart';
 import 'dart:math' as math;
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ai_assistant/providers/theme_provider.dart';
-import 'package:ai_assistant/providers/config_provider.dart';
-import 'package:ai_assistant/models/xiaozhi_config.dart';
 import 'package:ai_assistant/models/dify_config.dart';
 import 'package:ai_assistant/models/minimax_config.dart';
-import 'package:ai_assistant/widgets/settings_section.dart';
-import 'package:ai_assistant/services/dify_service.dart';
+import 'package:ai_assistant/models/xiaozhi_config.dart';
+import 'package:ai_assistant/providers/config_provider.dart';
+import 'package:ai_assistant/providers/theme_provider.dart';
+import 'package:ai_assistant/screens/diagnostics_screen.dart';
+import 'package:ai_assistant/screens/interpreter_screen.dart';
+import 'package:ai_assistant/screens/xiaozhi_official_setup_screen.dart';
 
-// 引入main.dart中定义的常量
-import 'package:ai_assistant/main.dart' show enableDebugTools;
-
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  Widget build(BuildContext context) {
+    final config = context.watch<ConfigProvider>();
+    final theme = context.watch<ThemeProvider>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Cài đặt')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+          children: [
+            _SectionTitle('AI & dịch vụ'),
+            _NavCard(
+              icon: Icons.hub_rounded,
+              title: 'Xiaozhi',
+              subtitle: '${config.xiaozhiConfigs.length} cấu hình • Voice / WebSocket / OTA',
+              badge: config.xiaozhiConfigs.isEmpty ? 'Chưa cấu hình' : 'Sẵn sàng',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const _XiaozhiSettingsPage()),
+              ),
+            ),
+            _NavCard(
+              icon: Icons.chat_bubble_outline_rounded,
+              title: 'Dify',
+              subtitle: '${config.difyConfigs.length} cấu hình Agent/API',
+              badge: config.difyConfigs.isEmpty ? 'Chưa cấu hình' : 'Đã cấu hình',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const _DifySettingsPage()),
+              ),
+            ),
+            _NavCard(
+              icon: Icons.auto_awesome_rounded,
+              title: 'MiniMax',
+              subtitle: '${config.minimaxConfigs.length} cấu hình mô hình AI',
+              badge: config.minimaxConfigs.isEmpty ? 'Chưa cấu hình' : 'Đã cấu hình',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const _MiniMaxSettingsPage()),
+              ),
+            ),
+            const SizedBox(height: 18),
+            _SectionTitle('Giọng nói & phiên dịch'),
+            _NavCard(
+              icon: Icons.translate_rounded,
+              title: 'Phiên dịch AI',
+              subtitle: 'Dịch văn bản, giọng nói và phát TTS đa ngôn ngữ',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const InterpreterScreen()),
+              ),
+            ),
+            _NavCard(
+              icon: Icons.monitor_heart_outlined,
+              title: 'Chẩn đoán Voice',
+              subtitle: 'MIC → VAD → ASR → Agent → Tool → TTS',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DiagnosticsScreen()),
+              ),
+            ),
+            const SizedBox(height: 18),
+            _SectionTitle('Giao diện'),
+            Card(
+              child: SwitchListTile.adaptive(
+                secondary: Icon(theme.isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded),
+                title: const Text('Chế độ tối', style: TextStyle(fontWeight: FontWeight.w700)),
+                subtitle: const Text('Chuyển giao diện sáng / tối'),
+                value: theme.isDarkMode,
+                onChanged: (_) => theme.toggleTheme(),
+              ),
+            ),
+            const SizedBox(height: 18),
+            _SectionTitle('Phiên bản'),
+            const Card(
+              child: ListTile(
+                leading: Icon(Icons.verified_outlined),
+                title: Text('AI-LHHT v3.0 Voice Pro', style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('3.0.0+300 • Vietnamese Edition'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _SettingsScreenState extends State<SettingsScreen>
-    with SingleTickerProviderStateMixin {
-  // 移除单个Cấu hình Dify控制器
-  // final _difyApiKeyController = TextEditingController();
-  // final _difyApiUrlController = TextEditingController();
+class _SectionTitle extends StatelessWidget {
+  final String text;
+  const _SectionTitle(this.text);
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+        child: Text(text, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+      );
+}
 
-  // Thêm新Cấu hình Dify的控制器
-  final _newDifyNameController = TextEditingController();
-  final _newDifyApiKeyController = TextEditingController();
-  final _newDifyApiUrlController = TextEditingController();
-
-  late TabController _tabController;
-  int _currentTabIndex = 0;
+class _NavCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? badge;
+  final VoidCallback onTap;
+  const _NavCard({required this.icon, required this.title, required this.subtitle, this.badge, required this.onTap});
 
   @override
-  void initState() {
-    super.initState();
-    final configProvider = Provider.of<ConfigProvider>(context, listen: false);
-
-    // LưuProvider引用，以便在dispose中安全使用
-    _configProvider = configProvider;
-
-    // 初始化选项卡控制器
-    _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() {
-      if (_tabController.indexIsChanging) {
-        setState(() {
-          _currentTabIndex = _tabController.index;
-        });
-      }
-    });
-
-    // Xóa旧的单个cấu hình初始化代码
+  Widget build(BuildContext context) {
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(icon, color: Theme.of(context).colorScheme.onPrimaryContainer),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 3),
+                    Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    if (badge != null) ...[
+                      const SizedBox(height: 7),
+                      Text(badge!, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w700)),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
   }
+}
 
-  // 存储ConfigProvider引用，避免在dispose中访问context
-  late final ConfigProvider _configProvider;
+class _XiaozhiSettingsPage extends StatelessWidget {
+  const _XiaozhiSettingsPage();
 
   @override
-  void dispose() {
-    // 移除监听器
-    _configProvider.removeListener(_updateDifyControllers);
-
-    // 释放控制器资源
-    _newDifyNameController.dispose();
-    _newDifyApiKeyController.dispose();
-    _newDifyApiUrlController.dispose();
-
-    _tabController.dispose();
-    super.dispose();
+  Widget build(BuildContext context) {
+    final provider = context.watch<ConfigProvider>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Xiaozhi')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          FilledButton.icon(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const XiaozhiOfficialSetupScreen())),
+            icon: const Icon(Icons.link_rounded),
+            label: const Text('Kết nối Xiaozhi chính thức'),
+          ),
+          const SizedBox(height: 14),
+          if (provider.xiaozhiConfigs.isEmpty)
+            const _EmptyCard('Chưa có cấu hình Xiaozhi. Dùng nút phía trên để provisioning chính thức.')
+          else
+            ...provider.xiaozhiConfigs.map((item) => _XiaozhiConfigCard(item)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showXiaozhiDialog(context),
+        icon: const Icon(Icons.add),
+        label: const Text('Thêm thủ công'),
+      ),
+    );
   }
+}
 
-  void _updateDifyControllers() {
-    // 不再需要此方法，但保留空实现以避免其他地方的调用出错
+class _XiaozhiConfigCard extends StatelessWidget {
+  final XiaozhiConfig config;
+  const _XiaozhiConfigCard(this.config);
+  String _mask(String token) {
+    if (token.isEmpty) return 'Chưa có';
+    if (token.length <= 6) return '••••••';
+    return '${token.substring(0, math.min(3, token.length))}••••••${token.substring(token.length - 2)}';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 1,
-        toolbarHeight: 70,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black, size: 26),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: const Text(
-          'Cài đặt',
-          style: TextStyle(
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
-            fontSize: 24,
-          ),
-        ),
-      ),
-      body: Column(
-        children: [
-          _buildTabBar(),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildGeneralTab(),
-                _buildDifyConfigTab(),
-                _buildMiniMaxConfigTab(),
-                _buildXiaozhiConfigTab(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTabBar() {
-    return Container(
-      color: const Color(0xFFF8F9FA),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Container(
-        height: 46,
-        decoration: BoxDecoration(
-          color: const Color(0xFFE8E8E8),
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 2,
-              spreadRadius: 0,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-        child: TabBar(
-          controller: _tabController,
-          indicator: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          indicatorPadding: const EdgeInsets.symmetric(
-            horizontal: 4,
-            vertical: 3,
-          ),
-          labelPadding: EdgeInsets.zero,
-          padding: EdgeInsets.zero,
-          indicatorSize: TabBarIndicatorSize.tab,
-          labelColor: Colors.black,
-          unselectedLabelColor: Colors.grey.shade700,
-          dividerColor: Colors.transparent,
-          overlayColor: MaterialStateProperty.all(Colors.transparent),
-          splashFactory: NoSplash.splashFactory,
-          labelStyle: const TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 16,
-          ),
-          unselectedLabelStyle: const TextStyle(
-            fontWeight: FontWeight.w500,
-            fontSize: 16,
-          ),
-          tabs: const [Tab(text: 'Chung'), Tab(text: 'Dify'), Tab(text: 'MiniMax'), Tab(text: 'Xiaozhi')],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGeneralTab() {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildCard(
-              title: 'Giao diện',
-              subtitle: 'Điều chỉnh giao diện ứng dụng',
-              child: Column(
-                children: [
-                  Consumer<ThemeProvider>(
-                    builder: (context, themeProvider, child) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 20,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 24,
-                                  height: 24,
-                                  child: const Icon(
-                                    Icons.dark_mode,
-                                    color: Colors.black,
-                                    size: 22,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                const Text(
-                                  'Chế độ tối',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Switch.adaptive(
-                              value: themeProvider.isDarkMode,
-                              onChanged: (value) {
-                                themeProvider.toggleTheme();
-                              },
-                              activeColor: Colors.black,
-                              inactiveTrackColor: const Color(0xFFE0E0E0),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDifyConfigTab() {
-    return Consumer<ConfigProvider>(
-      builder: (context, configProvider, child) {
-        final difyConfigs = configProvider.difyConfigs;
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildCard(
-                title: 'Cấu hình Dify API',
-                subtitle: 'Cấu hình và quản lý nhiều dịch vụ Dify API',
-                actionButton: ElevatedButton.icon(
-                  onPressed: _showAddDifyDialog,
-                  icon: const Icon(Icons.add, color: Colors.white, size: 18),
-                  label: const Text(
-                    'Thêm cấu hình',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF222222),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    elevation: 0,
-                    minimumSize: const Size(100, 36),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    if (difyConfigs.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(child: Text('Chưa có cấu hình Dify, nhấn Thêm ở góc trên bên phải')),
-                      )
-                    else
-                      ...difyConfigs.map(
-                        (config) => _buildDifyConfigItem(config),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildDifyConfigItem(DifyConfig config) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 4,
-            spreadRadius: 0,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+    return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -316,2602 +214,334 @@ class _SettingsScreenState extends State<SettingsScreen>
           children: [
             Row(
               children: [
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.blue.withOpacity(0.3),
-                        blurRadius: 8,
-                        spreadRadius: 0,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: CircleAvatar(
-                    radius: 24,
-                    backgroundColor: Colors.blue.shade400,
-                    child: const Icon(
-                      Icons.chat_bubble_outline,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        config.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        config.apiUrl,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  margin: const EdgeInsets.only(left: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.edit_outlined,
-                      color: Colors.grey.shade600,
-                      size: 22,
-                    ),
-                    onPressed: () => _showEditDifyDialog(config),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.red,
-                      size: 22,
-                    ),
-                    onPressed: () => _showDeleteDifyDialog(config),
-                    padding: const EdgeInsets.all(8),
-                  ),
+                const CircleAvatar(child: Icon(Icons.mic_rounded)),
+                const SizedBox(width: 12),
+                Expanded(child: Text(config.name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17), overflow: TextOverflow.ellipsis)),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'edit') _showXiaozhiDialog(context, existing: config);
+                    if (value == 'delete') context.read<ConfigProvider>().deleteXiaozhiConfig(config.id);
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Chỉnh sửa')),
+                    PopupMenuItem(value: 'delete', child: Text('Xóa')),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'API Key:',
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${config.apiKey.substring(0, math.min(8, config.apiKey.length))}****',
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+            const Divider(height: 24),
+            _InfoLine('Server', config.websocketUrl),
+            _InfoLine('Device ID', config.macAddress),
+            _InfoLine('Client ID', config.clientId),
+            _InfoLine('Token', _mask(config.token)),
           ],
         ),
       ),
-    );
-  }
-
-  void _showAddDifyDialog() {
-    _newDifyNameController.clear();
-    _newDifyApiKeyController.clear();
-    _newDifyApiUrlController.clear();
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            elevation: 8,
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Thêm cấu hình Dify',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 2,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                          child: IconButton(
-                            icon: const Icon(Icons.close, size: 22),
-                            onPressed: () => Navigator.pop(context),
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Thêm cấu hình Dify API mới',
-                      style: TextStyle(color: Colors.grey, fontSize: 14),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Tên cấu hình',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: _newDifyNameController,
-                        decoration: InputDecoration(
-                          hintText: 'Nhập tên cấu hình',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'API URL',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: _newDifyApiUrlController,
-                        decoration: InputDecoration(
-                          hintText: 'https://api.dify.ai/v1',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'API Key',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: _newDifyApiKeyController,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                          hintText: 'Nhập API Key',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () async {
-                        final name = _newDifyNameController.text.trim();
-                        final apiUrl = _newDifyApiUrlController.text.trim();
-                        final apiKey = _newDifyApiKeyController.text.trim();
-
-                        if (name.isEmpty || apiUrl.isEmpty || apiKey.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Vui lòng điền đầy đủ các trường')),
-                          );
-                          return;
-                        }
-
-                        await Provider.of<ConfigProvider>(
-                          context,
-                          listen: false,
-                        ).addDifyConfig(name, apiKey, apiUrl);
-
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Đã thêm cấu hình Dify'),
-                            backgroundColor: Colors.green.shade600,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            margin: const EdgeInsets.all(10),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shadowColor: Colors.black.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Thêm',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(color: Colors.grey),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Hủy',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  void _showEditDifyDialog(DifyConfig config) {
-    _newDifyNameController.text = config.name;
-    _newDifyApiKeyController.text = config.apiKey;
-    _newDifyApiUrlController.text = config.apiUrl;
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            elevation: 8,
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Sửa cấu hình Dify',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 2,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                          child: IconButton(
-                            icon: const Icon(Icons.close, size: 22),
-                            onPressed: () => Navigator.pop(context),
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Sửa cấu hình Dify API',
-                      style: TextStyle(color: Colors.grey, fontSize: 14),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Tên cấu hình',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: _newDifyNameController,
-                        decoration: InputDecoration(
-                          hintText: 'Nhập tên cấu hình',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'API URL',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: _newDifyApiUrlController,
-                        decoration: InputDecoration(
-                          hintText: 'https://api.dify.ai/v1',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'API Key',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: _newDifyApiKeyController,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                          hintText: 'Nhập API Key',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () async {
-                        final name = _newDifyNameController.text.trim();
-                        final apiUrl = _newDifyApiUrlController.text.trim();
-                        final apiKey = _newDifyApiKeyController.text.trim();
-
-                        if (name.isEmpty || apiUrl.isEmpty || apiKey.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Vui lòng điền đầy đủ các trường'),
-                              backgroundColor: Colors.red.shade600,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              margin: const EdgeInsets.all(10),
-                            ),
-                          );
-                          return;
-                        }
-
-                        final updatedConfig = DifyConfig(
-                          id: config.id,
-                          name: name,
-                          apiUrl: apiUrl,
-                          apiKey: apiKey,
-                        );
-
-                        await Provider.of<ConfigProvider>(
-                          context,
-                          listen: false,
-                        ).updateDifyConfig(updatedConfig);
-
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Đã cập nhật cấu hình Dify'),
-                            backgroundColor: Colors.green.shade600,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            margin: const EdgeInsets.all(10),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shadowColor: Colors.black.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Lưu',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(color: Colors.grey),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Hủy',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  void _showDeleteDifyDialog(DifyConfig config) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Xóa cấu hình Dify',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 22),
-                          onPressed: () => Navigator.pop(context),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.red.shade100),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.warning_amber_rounded,
-                            color: Colors.red.shade700,
-                            size: 24,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              '确定要Xóa"${config.name}"cấu hình吗？这个操作不可Hoàn tác。',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.red.shade900,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shadowColor: Colors.red.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      onPressed: () async {
-                        await Provider.of<ConfigProvider>(
-                          context,
-                          listen: false,
-                        ).deleteDifyConfig(config.id);
-
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Đã xóa cấu hình'),
-                            backgroundColor: Colors.green.shade600,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            margin: const EdgeInsets.all(10),
-                          ),
-                        );
-                      },
-                      child: const Text(
-                        'Xóa',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(color: Colors.grey),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Hủy',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  Widget _buildMiniMaxConfigTab() {
-    return Consumer<ConfigProvider>(
-      builder: (context, configProvider, child) {
-        final minimaxConfigs = configProvider.minimaxConfigs;
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildCard(
-                title: 'Cấu hình MiniMax AI',
-                subtitle: 'Cấu hình và quản lý dịch vụ MiniMax API',
-                actionButton: ElevatedButton.icon(
-                  onPressed: _showAddMiniMaxDialog,
-                  icon: const Icon(Icons.add, color: Colors.white, size: 18),
-                  label: const Text(
-                    'Thêm cấu hình',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF222222),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    elevation: 0,
-                    minimumSize: const Size(100, 36),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    if (minimaxConfigs.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(child: Text('Chưa có cấu hình MiniMax, nhấn Thêm ở góc trên bên phải')),
-                      )
-                    else
-                      ...minimaxConfigs.map(
-                        (config) => _buildMiniMaxConfigItem(config),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMiniMaxConfigItem(MiniMaxConfig config) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 4,
-            spreadRadius: 0,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.teal.withOpacity(0.3),
-                        blurRadius: 8,
-                        spreadRadius: 0,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: CircleAvatar(
-                    radius: 24,
-                    backgroundColor: Colors.teal.shade400,
-                    child: const Icon(
-                      Icons.auto_awesome,
-                      color: Colors.white,
-                      size: 26,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        config.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        config.model,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  margin: const EdgeInsets.only(left: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.edit_outlined,
-                      color: Colors.grey.shade600,
-                      size: 22,
-                    ),
-                    onPressed: () => _showEditMiniMaxDialog(config),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.red,
-                      size: 22,
-                    ),
-                    onPressed: () => _showDeleteMiniMaxDialog(config),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'API Key:',
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${config.apiKey.substring(0, math.min(8, config.apiKey.length))}****',
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showAddMiniMaxDialog() {
-    final nameController = TextEditingController();
-    final apiKeyController = TextEditingController();
-    String selectedModel = 'MiniMax-M2.7';
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder: (context, setDialogState) => Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              elevation: 8,
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 12,
-                      spreadRadius: 0,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Thêm cấu hình MiniMax',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade100,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: IconButton(
-                              icon: const Icon(Icons.close, size: 22),
-                              onPressed: () => Navigator.pop(context),
-                              padding: const EdgeInsets.all(4),
-                              constraints: const BoxConstraints(),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Thêm cấu hình MiniMax AI mới',
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
-                      ),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'Tên cấu hình',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: TextField(
-                          controller: nameController,
-                          decoration: InputDecoration(
-                            hintText: 'Ví dụ: MiniMax AI',
-                            hintStyle: TextStyle(color: Colors.grey.shade400),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'API Key',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: TextField(
-                          controller: apiKeyController,
-                          obscureText: true,
-                          decoration: InputDecoration(
-                            hintText: 'Nhập MiniMax API Key',
-                            hintStyle: TextStyle(color: Colors.grey.shade400),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Mô hình',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: selectedModel,
-                            isExpanded: true,
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'MiniMax-M2.7',
-                                child: Text('MiniMax-M2.7'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'MiniMax-M2.5',
-                                child: Text('MiniMax-M2.5'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'MiniMax-M2.5-highspeed',
-                                child: Text('MiniMax-M2.5-highspeed'),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              setDialogState(() {
-                                selectedModel = value ?? 'MiniMax-M2.7';
-                              });
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: () async {
-                          final name = nameController.text.trim();
-                          final apiKey = apiKeyController.text.trim();
-
-                          if (name.isEmpty || apiKey.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Vui lòng điền đầy đủ các trường')),
-                            );
-                            return;
-                          }
-
-                          await Provider.of<ConfigProvider>(
-                            context,
-                            listen: false,
-                          ).addMiniMaxConfig(name, apiKey, model: selectedModel);
-
-                          Navigator.of(context).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Đã thêm cấu hình MiniMax'),
-                              backgroundColor: Colors.green.shade600,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              margin: const EdgeInsets.all(10),
-                            ),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.black,
-                          foregroundColor: Colors.white,
-                          elevation: 4,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Thêm',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.black,
-                          side: const BorderSide(color: Colors.grey),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Hủy',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  void _showEditMiniMaxDialog(MiniMaxConfig config) {
-    final nameController = TextEditingController(text: config.name);
-    final apiKeyController = TextEditingController(text: config.apiKey);
-    String selectedModel = config.model;
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder: (context, setDialogState) => Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              elevation: 8,
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Sửa cấu hình MiniMax',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close, size: 22),
-                            onPressed: () => Navigator.pop(context),
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints(),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'Tên cấu hình',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: TextField(
-                          controller: nameController,
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'API Key',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: TextField(
-                          controller: apiKeyController,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Mô hình',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: selectedModel,
-                            isExpanded: true,
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'MiniMax-M2.7',
-                                child: Text('MiniMax-M2.7'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'MiniMax-M2.5',
-                                child: Text('MiniMax-M2.5'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'MiniMax-M2.5-highspeed',
-                                child: Text('MiniMax-M2.5-highspeed'),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              setDialogState(() {
-                                selectedModel = value ?? config.model;
-                              });
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: () async {
-                          final name = nameController.text.trim();
-                          final apiKey = apiKeyController.text.trim();
-
-                          if (name.isEmpty || apiKey.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Vui lòng điền đầy đủ các trường')),
-                            );
-                            return;
-                          }
-
-                          final updatedConfig = MiniMaxConfig(
-                            id: config.id,
-                            name: name,
-                            apiKey: apiKey,
-                            model: selectedModel,
-                          );
-
-                          await Provider.of<ConfigProvider>(
-                            context,
-                            listen: false,
-                          ).updateMiniMaxConfig(updatedConfig);
-
-                          Navigator.of(context).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Đã cập nhật cấu hình MiniMax'),
-                              backgroundColor: Colors.green.shade600,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              margin: const EdgeInsets.all(10),
-                            ),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.black,
-                          foregroundColor: Colors.white,
-                          elevation: 4,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Lưu',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.black,
-                          side: const BorderSide(color: Colors.grey),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'Hủy',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  void _showDeleteMiniMaxDialog(MiniMaxConfig config) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Xóa cấu hình MiniMax',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.pop(context),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red.shade100),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.warning_amber_rounded,
-                          color: Colors.red.shade700,
-                          size: 24,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            '确定要Xóa"${config.name}"cấu hình吗？',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.red.shade900,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () async {
-                      await Provider.of<ConfigProvider>(
-                        context,
-                        listen: false,
-                      ).deleteMiniMaxConfig(config.id);
-
-                      Navigator.of(context).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Đã xóa cấu hình'),
-                          backgroundColor: Colors.green.shade600,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          margin: const EdgeInsets.all(10),
-                        ),
-                      );
-                    },
-                    child: const Text(
-                      'Xóa',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      side: const BorderSide(color: Colors.grey),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Hủy',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-    );
-  }
-
-  Widget _buildXiaozhiConfigTab() {
-    return Consumer<ConfigProvider>(
-      builder: (context, configProvider, child) {
-        final xiaozhiConfigs = configProvider.xiaozhiConfigs;
-
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildCard(
-                title: 'Dịch vụ Xiaozhi',
-                subtitle: 'Kết nối Agent trên Xiaozhi hoặc server tương thích',
-                actionButton: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const XiaozhiOfficialSetupScreen(),
-                        ),
-                      ),
-                      child: const Text('Xiaozhi chính thức'),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      onPressed: _showAddXiaozhiConfigDialog,
-                      icon: const Icon(Icons.add, color: Colors.white, size: 18),
-                      label: const Text('Thêm thủ công'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF222222),
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    if (xiaozhiConfigs.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(child: Text('Chưa có dịch vụ Xiaozhi. Hãy kết nối Xiaozhi chính thức hoặc thêm thủ công.')),
-                      )
-                    else
-                      ...xiaozhiConfigs.map(
-                        (config) => _buildXiaozhiConfigCard(config),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildXiaozhiConfigCard(XiaozhiConfig config) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 4,
-            spreadRadius: 0,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.purple.withOpacity(0.3),
-                        blurRadius: 8,
-                        spreadRadius: 0,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: CircleAvatar(
-                    radius: 24,
-                    backgroundColor: Colors.purple.shade400,
-                    child: const Icon(Icons.mic, color: Colors.white, size: 26),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        config.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        config.websocketUrl,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  margin: const EdgeInsets.only(left: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.edit_outlined,
-                      color: Colors.grey.shade600,
-                      size: 22,
-                    ),
-                    onPressed: () => _showEditXiaozhiConfigDialog(config),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 2,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.red,
-                      size: 22,
-                    ),
-                    onPressed: () => _showDeleteXiaozhiConfigDialog(config),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Device/MAC:',
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        config.macAddress.isEmpty ? 'Chưa đặt' : config.macAddress,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Token:',
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        config.token.isEmpty ? 'Chưa đặt' : config.token,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCard({
-    required String title,
-    required String subtitle,
-    required Widget child,
-    Widget? actionButton,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            spreadRadius: 0,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-                if (actionButton != null) actionButton,
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Divider(height: 1, color: Color(0xFFEEEEEE)),
-          child,
-        ],
-      ),
-    );
-  }
-
-  void _showAddXiaozhiConfigDialog() {
-    final nameController = TextEditingController();
-    final websocketUrlController = TextEditingController();
-    final tokenController = TextEditingController();
-    final macAddressController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            elevation: 8,
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Thêm dịch vụ Xiaozhi',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 2,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
-                          ),
-                          child: IconButton(
-                            icon: const Icon(Icons.close, size: 22),
-                            onPressed: () => Navigator.pop(context),
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Thêm cấu hình dịch vụ giọng nói Xiaozhi mới',
-                      style: TextStyle(color: Colors.grey, fontSize: 14),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Tên dịch vụ',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: nameController,
-                        decoration: InputDecoration(
-                          hintText: 'Ví dụ: Xiaozhi gia đình',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Địa chỉ WebSocket',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: websocketUrlController,
-                        decoration: InputDecoration(
-                          hintText: 'Ví dụ: wss://example.com',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Địa chỉ MAC (tùy chọn)',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        enabled: true,
-                        controller: macAddressController,
-                        decoration: InputDecoration(
-                          hintText: 'Để trống để tự tạo',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Để trống để tự tạo theo ID thiết bị',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Token',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Bật mặc định',
-                            style: TextStyle(color: Colors.grey, fontSize: 14),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: tokenController,
-                        decoration: const InputDecoration(
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () {
-                        final name = nameController.text.trim();
-                        final websocketUrl = websocketUrlController.text.trim();
-                        final macAddress = macAddressController.text.trim();
-                        final token = tokenController.text.trim();
-
-                        if (name.isEmpty || websocketUrl.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Vui lòng điền đầy đủ các trường bắt buộc'),
-                              backgroundColor: Colors.red.shade600,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              margin: const EdgeInsets.all(10),
-                            ),
-                          );
-                          return;
-                        }
-
-                        Provider.of<ConfigProvider>(
-                          context,
-                          listen: false,
-                        ).addXiaozhiConfig(
-                          name,
-                          websocketUrl,
-                          customMacAddress:
-                              macAddress.isNotEmpty ? macAddress : null,
-                          customToken: token.isNotEmpty ? token : null,
-                        );
-
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Đã thêm dịch vụ Xiaozhi'),
-                            backgroundColor: Colors.green.shade600,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            margin: const EdgeInsets.all(10),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shadowColor: Colors.black.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Thêm',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(color: Colors.grey),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Hủy',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  void _showEditXiaozhiConfigDialog(XiaozhiConfig config) {
-    final nameController = TextEditingController(text: config.name);
-    final websocketUrlController = TextEditingController(
-      text: config.websocketUrl,
-    );
-    final macAddressController = TextEditingController(text: config.macAddress);
-    final tokenController = TextEditingController(text: config.token);
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            elevation: 8,
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Sửa dịch vụ Xiaozhi',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(context),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Sửa cấu hình dịch vụ giọng nói Xiaozhi',
-                      style: TextStyle(color: Colors.grey, fontSize: 14),
-                    ),
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Tên dịch vụ',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: nameController,
-                        decoration: InputDecoration(
-                          hintText: 'Ví dụ: Xiaozhi gia đình',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Địa chỉ WebSocket',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: websocketUrlController,
-                        decoration: InputDecoration(
-                          hintText: 'Ví dụ: wss://example.com',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Địa chỉ MAC',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF5F5F5),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.grey.shade300),
-                      ),
-                      child: TextField(
-                        controller: macAddressController,
-                        enabled: true,
-                        decoration: InputDecoration(
-                          hintText: 'Để trống để tự tạo',
-                          hintStyle: TextStyle(color: Colors.grey.shade400),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Để trống để tự tạo theo ID thiết bị',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Token',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Bật mặc định',
-                            style: TextStyle(color: Colors.grey, fontSize: 14),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey.shade300),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.03),
-                            blurRadius: 4,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        controller: tokenController,
-                        decoration: const InputDecoration(
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () {
-                        final name = nameController.text.trim();
-                        final websocketUrl = websocketUrlController.text.trim();
-                        final macAddress = macAddressController.text.trim();
-                        final token = tokenController.text.trim();
-
-                        if (name.isEmpty || websocketUrl.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text('Vui lòng điền đầy đủ các trường bắt buộc'),
-                              backgroundColor: Colors.red.shade600,
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              margin: const EdgeInsets.all(10),
-                            ),
-                          );
-                          return;
-                        }
-
-                        final updatedConfig = config.copyWith(
-                          name: name,
-                          websocketUrl: websocketUrl,
-                          macAddress:
-                              macAddress.isNotEmpty
-                                  ? macAddress
-                                  : config.macAddress,
-                          token: token.isNotEmpty ? token : config.token,
-                        );
-
-                        Provider.of<ConfigProvider>(
-                          context,
-                          listen: false,
-                        ).updateXiaozhiConfig(updatedConfig);
-
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Đã cập nhật dịch vụ Xiaozhi'),
-                            backgroundColor: Colors.green.shade600,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            margin: const EdgeInsets.all(10),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shadowColor: Colors.black.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Lưu',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(color: Colors.grey),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Hủy',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-    );
-  }
-
-  void _showDeleteXiaozhiConfigDialog(XiaozhiConfig config) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    spreadRadius: 0,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Xóa dịch vụ Xiaozhi',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(context),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      '确定要Xóa ${config.name} 吗？',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () {
-                        Provider.of<ConfigProvider>(
-                          context,
-                          listen: false,
-                        ).deleteXiaozhiConfig(config.id);
-
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Đã xóa dịch vụ Xiaozhi'),
-                            backgroundColor: Colors.green.shade600,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            margin: const EdgeInsets.all(10),
-                          ),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        elevation: 4,
-                        shadowColor: Colors.black.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Xóa',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: const BorderSide(color: Colors.grey),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Hủy',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
     );
   }
 }
+
+class _DifySettingsPage extends StatelessWidget {
+  const _DifySettingsPage();
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<ConfigProvider>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Dify')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (provider.difyConfigs.isEmpty)
+            const _EmptyCard('Chưa có cấu hình Dify. Thêm API URL và API Key để sử dụng Agent Dify.')
+          else
+            ...provider.difyConfigs.map((item) => _DifyConfigCard(item)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showDifyDialog(context),
+        icon: const Icon(Icons.add),
+        label: const Text('Thêm Dify'),
+      ),
+    );
+  }
+}
+
+class _DifyConfigCard extends StatelessWidget {
+  final DifyConfig config;
+  const _DifyConfigCard(this.config);
+  @override
+  Widget build(BuildContext context) => Card(
+        child: ListTile(
+          contentPadding: const EdgeInsets.all(16),
+          leading: const CircleAvatar(child: Icon(Icons.chat_bubble_outline)),
+          title: Text(config.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+          subtitle: Text('${config.apiUrl}\nAPI key: ${_maskSecret(config.apiKey)}', maxLines: 3, overflow: TextOverflow.ellipsis),
+          trailing: PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'edit') _showDifyDialog(context, existing: config);
+              if (value == 'delete') context.read<ConfigProvider>().deleteDifyConfig(config.id);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('Chỉnh sửa')),
+              PopupMenuItem(value: 'delete', child: Text('Xóa')),
+            ],
+          ),
+        ),
+      );
+}
+
+class _MiniMaxSettingsPage extends StatelessWidget {
+  const _MiniMaxSettingsPage();
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<ConfigProvider>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('MiniMax')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (provider.minimaxConfigs.isEmpty)
+            const _EmptyCard('Chưa có MiniMax API Key. MiniMax có thể dùng cho chat và phiên dịch AI.')
+          else
+            ...provider.minimaxConfigs.map((item) => _MiniMaxConfigCard(item)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showMiniMaxDialog(context),
+        icon: const Icon(Icons.add),
+        label: const Text('Thêm MiniMax'),
+      ),
+    );
+  }
+}
+
+class _MiniMaxConfigCard extends StatelessWidget {
+  final MiniMaxConfig config;
+  const _MiniMaxConfigCard(this.config);
+  @override
+  Widget build(BuildContext context) => Card(
+        child: ListTile(
+          contentPadding: const EdgeInsets.all(16),
+          leading: const CircleAvatar(child: Icon(Icons.auto_awesome_rounded)),
+          title: Text(config.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+          subtitle: Text('${config.model}\nAPI key: ${_maskSecret(config.apiKey)}'),
+          trailing: PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'edit') _showMiniMaxDialog(context, existing: config);
+              if (value == 'delete') context.read<ConfigProvider>().deleteMiniMaxConfig(config.id);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('Chỉnh sửa')),
+              PopupMenuItem(value: 'delete', child: Text('Xóa')),
+            ],
+          ),
+        ),
+      );
+}
+
+class _EmptyCard extends StatelessWidget {
+  final String text;
+  const _EmptyCard(this.text);
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            children: [
+              const Icon(Icons.inbox_outlined, size: 42),
+              const SizedBox(height: 10),
+              Text(text, textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      );
+}
+
+class _InfoLine extends StatelessWidget {
+  final String label;
+  final String value;
+  const _InfoLine(this.label, this.value);
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 82, child: Text(label, style: const TextStyle(color: Colors.grey))),
+            Expanded(child: Text(value, maxLines: 2, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+      );
+}
+
+String _maskSecret(String value) {
+  if (value.isEmpty) return 'Chưa có';
+  if (value.length <= 8) return '••••••••';
+  return '${value.substring(0, 4)}••••••${value.substring(value.length - 3)}';
+}
+
+Future<void> _showDifyDialog(BuildContext context, {DifyConfig? existing}) async {
+  final name = TextEditingController(text: existing?.name ?? 'Dify');
+  final url = TextEditingController(text: existing?.apiUrl ?? '');
+  final key = TextEditingController(text: existing?.apiKey ?? '');
+  final form = GlobalKey<FormState>();
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(existing == null ? 'Thêm Dify' : 'Chỉnh sửa Dify'),
+      content: Form(
+        key: form,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(controller: name, decoration: const InputDecoration(labelText: 'Tên cấu hình'), validator: _required),
+              const SizedBox(height: 10),
+              TextFormField(controller: url, decoration: const InputDecoration(labelText: 'API URL'), validator: _required),
+              const SizedBox(height: 10),
+              TextFormField(controller: key, obscureText: true, decoration: const InputDecoration(labelText: 'API Key'), validator: _required),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Hủy')),
+        FilledButton(
+          onPressed: () async {
+            if (!(form.currentState?.validate() ?? false)) return;
+            final provider = context.read<ConfigProvider>();
+            if (existing == null) {
+              await provider.addDifyConfig(name.text.trim(), key.text.trim(), url.text.trim());
+            } else {
+              await provider.updateDifyConfig(existing.copyWith(name: name.text.trim(), apiKey: key.text.trim(), apiUrl: url.text.trim()));
+            }
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+          child: const Text('Lưu'),
+        ),
+      ],
+    ),
+  );
+  name.dispose(); url.dispose(); key.dispose();
+}
+
+Future<void> _showMiniMaxDialog(BuildContext context, {MiniMaxConfig? existing}) async {
+  final name = TextEditingController(text: existing?.name ?? 'MiniMax');
+  final key = TextEditingController(text: existing?.apiKey ?? '');
+  final model = TextEditingController(text: existing?.model ?? 'MiniMax-M2.7');
+  final form = GlobalKey<FormState>();
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(existing == null ? 'Thêm MiniMax' : 'Chỉnh sửa MiniMax'),
+      content: Form(
+        key: form,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(controller: name, decoration: const InputDecoration(labelText: 'Tên cấu hình'), validator: _required),
+              const SizedBox(height: 10),
+              TextFormField(controller: key, obscureText: true, decoration: const InputDecoration(labelText: 'API Key'), validator: _required),
+              const SizedBox(height: 10),
+              TextFormField(controller: model, decoration: const InputDecoration(labelText: 'Model'), validator: _required),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Hủy')),
+        FilledButton(
+          onPressed: () async {
+            if (!(form.currentState?.validate() ?? false)) return;
+            final provider = context.read<ConfigProvider>();
+            if (existing == null) {
+              await provider.addMiniMaxConfig(name.text.trim(), key.text.trim(), model: model.text.trim());
+            } else {
+              await provider.updateMiniMaxConfig(existing.copyWith(name: name.text.trim(), apiKey: key.text.trim(), model: model.text.trim()));
+            }
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+          child: const Text('Lưu'),
+        ),
+      ],
+    ),
+  );
+  name.dispose(); key.dispose(); model.dispose();
+}
+
+Future<void> _showXiaozhiDialog(BuildContext context, {XiaozhiConfig? existing}) async {
+  final name = TextEditingController(text: existing?.name ?? 'Robot Xiaozhi');
+  final server = TextEditingController(text: existing?.websocketUrl ?? 'wss://api.tenclass.net/xiaozhi/v1/');
+  final device = TextEditingController(text: existing?.macAddress ?? '');
+  final client = TextEditingController(text: existing?.clientId ?? '');
+  final token = TextEditingController(text: existing?.token ?? '');
+  final form = GlobalKey<FormState>();
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(existing == null ? 'Thêm Xiaozhi thủ công' : 'Chỉnh sửa Xiaozhi'),
+      content: Form(
+        key: form,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(controller: name, decoration: const InputDecoration(labelText: 'Tên'), validator: _required),
+              const SizedBox(height: 10),
+              TextFormField(controller: server, decoration: const InputDecoration(labelText: 'WebSocket URL'), validator: _required),
+              const SizedBox(height: 10),
+              TextFormField(controller: device, decoration: const InputDecoration(labelText: 'Device / MAC')),
+              const SizedBox(height: 10),
+              TextFormField(controller: client, decoration: const InputDecoration(labelText: 'Client ID')),
+              const SizedBox(height: 10),
+              TextFormField(controller: token, obscureText: true, decoration: const InputDecoration(labelText: 'Token')),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Hủy')),
+        FilledButton(
+          onPressed: () async {
+            if (!(form.currentState?.validate() ?? false)) return;
+            final provider = context.read<ConfigProvider>();
+            if (existing == null) {
+              if (device.text.trim().isNotEmpty &&
+                  client.text.trim().isNotEmpty &&
+                  token.text.trim().isNotEmpty) {
+                await provider.addXiaozhiConfigWithToken(
+                  name: name.text.trim(),
+                  websocketUrl: server.text.trim(),
+                  macAddress: device.text.trim(),
+                  clientId: client.text.trim(),
+                  token: token.text.trim(),
+                );
+              } else {
+                await provider.addXiaozhiConfig(
+                  name.text.trim(),
+                  server.text.trim(),
+                  customMacAddress: device.text.trim().isEmpty ? null : device.text.trim(),
+                  customToken: token.text.trim().isEmpty ? null : token.text.trim(),
+                );
+              }
+            } else {
+              await provider.updateXiaozhiConfig(existing.copyWith(
+                name: name.text.trim(),
+                websocketUrl: server.text.trim(),
+                macAddress: device.text.trim(),
+                clientId: client.text.trim(),
+                token: token.text.trim(),
+              ));
+            }
+            if (dialogContext.mounted) Navigator.pop(dialogContext);
+          },
+          child: const Text('Lưu'),
+        ),
+      ],
+    ),
+  );
+  name.dispose(); server.dispose(); device.dispose(); client.dispose(); token.dispose();
+}
+
+String? _required(String? value) => (value == null || value.trim().isEmpty) ? 'Không được để trống' : null;

@@ -142,7 +142,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
       // 显示连接Thành công的提示
       if (mounted) {
         _showCustomSnackbar(
-          message: '已进入Giọng nói通话Chế độ',
+          message: 'Đã vào chế độ gọi thoại',
           icon: Icons.check_circle,
           iconColor: Colors.greenAccent,
         );
@@ -161,14 +161,14 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
       _startSpeaking();
     } catch (e) {
       setState(() {
-        _statusText = '准备Thất bại';
+        _statusText = 'Chuẩn bị thất bại';
         _isConnected = false;
       });
       print('准备Thất bại: $e');
 
       if (mounted) {
         _showCustomSnackbar(
-          message: '进入Giọng nói通话Chế độThất bại: $e',
+          message: 'Không thể vào chế độ gọi thoại: $e',
           icon: Icons.error_outline,
           iconColor: Colors.redAccent,
         );
@@ -228,7 +228,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
               }
             })
             .catchError((e) {
-              print('开始录音Thất bại: $e');
+              print('Không thể bắt đầu ghi âm: $e');
               // 如果Thất bại，恢复状态
               if (mounted) {
                 setState(() {
@@ -236,14 +236,14 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
                 });
 
                 _showCustomSnackbar(
-                  message: '开始录音Thất bại: $e',
+                  message: 'Không thể bắt đầu ghi âm: $e',
                   icon: Icons.error,
                   iconColor: Colors.redAccent,
                 );
               }
             });
       } catch (e) {
-        print('开始录音Thất bại: $e');
+        print('Không thể bắt đầu ghi âm: $e');
         // 如果Thất bại，恢复状态
         setState(() {
           _isSpeaking = false;
@@ -251,7 +251,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
 
         if (mounted) {
           _showCustomSnackbar(
-            message: '开始录音Thất bại: $e',
+            message: 'Không thể bắt đầu ghi âm: $e',
             icon: Icons.error,
             iconColor: Colors.redAccent,
           );

@@ -255,12 +255,12 @@ class DifyService {
         }
 
         throw Exception(
-          'API 请求Thất bại: ${response.statusCode}, 响应: ${response.body}',
+          'Yêu cầu API thất bại: ${response.statusCode}. Phản hồi: ${response.body}',
         );
       }
     } catch (e) {
       print('DifyService Lỗi: $e');
-      throw Exception('发送Tin nhắnThất bại: $e');
+      throw Exception('Gửi tin nhắn thất bại: $e');
     }
   }
 
@@ -507,7 +507,7 @@ class DifyService {
         final data = jsonDecode(response.body);
         return data;
       } else {
-        throw Exception('文件上传Thất bại: ${response.statusCode}, 响应: ${response.body}');
+        throw Exception('Tải tệp thất bại: ${response.statusCode}. Phản hồi: ${response.body}');
       }
     } catch (e) {
       print('DifyService 文件上传Lỗi: $e');

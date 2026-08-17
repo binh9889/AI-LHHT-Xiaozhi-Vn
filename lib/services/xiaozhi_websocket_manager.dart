@@ -106,8 +106,7 @@ class XiaozhiWebSocketManager {
           headers['Authorization'] = 'Bearer $token';
           print('$TAG: Authorization header enabled');
         } else {
-          headers['Authorization'] = 'Bearer test-token';
-          print('$TAG: Using test-token fallback');
+          print('$TAG: No token available; connecting without Authorization header');
         }
 
         // 使用IOWebSocketChannel并传递headers
@@ -125,12 +124,13 @@ class XiaozhiWebSocketManager {
         Timer(Duration(milliseconds: 100), () {
           if (_channel != null && isConnected) {
             // 发送认证信息作为第一条Tin nhắn
-            String authMessage =
-                'Authorization: Bearer ${_enableToken && token.isNotEmpty ? token : "test-token"}';
-            _channel!.sink.add(authMessage);
-            print('$TAG: Đã gửi Authorization fallback [đã ẩn token]');
+            if (_enableToken && token.isNotEmpty) {
+              final authMessage = 'Authorization: Bearer $token';
+              _channel!.sink.add(authMessage);
+              print('$TAG: Đã gửi Authorization fallback [đã ẩn token]');
+            }
 
-            // 发送设备ID信息
+            // Gửi thông tin định danh thiết bị.
             String deviceIdMessage = 'Device-ID: $_deviceId';
             _channel!.sink.add(deviceIdMessage);
             String clientIdMessage = 'Client-ID: $_clientId';

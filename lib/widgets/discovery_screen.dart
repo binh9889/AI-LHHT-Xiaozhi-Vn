@@ -1,344 +1,237 @@
 import 'package:flutter/material.dart';
+import 'package:ai_assistant/screens/interpreter_screen.dart';
+import 'package:ai_assistant/screens/diagnostics_screen.dart';
 
 class DiscoveryScreen extends StatelessWidget {
   const DiscoveryScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        AppBar(
-          title: const Text(
-            'Khám phá',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 28,
-              color: Colors.black,
-            ),
-          ),
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          backgroundColor: const Color(0xFFF8F9FA),
-          centerTitle: false,
-          titleSpacing: 20,
-          toolbarHeight: 65,
+    final width = MediaQuery.sizeOf(context).width;
+    final columns = width >= 900 ? 4 : width >= 600 ? 3 : 2;
+    return CustomScrollView(
+      slivers: [
+        const SliverAppBar(
+          pinned: true,
+          title: Text('Khám phá'),
         ),
-        Expanded(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          sliver: SliverToBoxAdapter(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, 16),
-                  child: Text(
-                    'Tiện ích',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
+                Text(
+                  'AI-LHHT Voice Pro',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
                 ),
-                _buildFeaturesGrid(context),
-                const SizedBox(height: 24),
-
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, 16),
-                  child: Text(
-                    'Đề xuất nổi bật',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
+                const SizedBox(height: 6),
+                Text(
+                  'Giọng nói, phiên dịch, tài liệu và chẩn đoán trong một nơi.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                 ),
-                _buildRecommendations(context),
-                // Thêm底部间距，避免内容被底部导航栏遮挡
-                SizedBox(height: MediaQuery.of(context).padding.bottom + 80),
               ],
             ),
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _buildFeaturesGrid(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      mainAxisSpacing: 16,
-      crossAxisSpacing: 16,
-      childAspectRatio: 1.3,
-      children: [
-        _buildFeatureCard(
-          context,
-          'Trợ lý đọc',
-          'Hiểu và tóm tắt bài viết hiệu quả',
-          Icons.menu_book_outlined,
-          const Color(0xFFFF6D00),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Tính năng trợ lý đọc đang phát triển...'),
-                duration: Duration(seconds: 2),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: width < 380 ? 1.0 : 1.12,
+            ),
+            delegate: SliverChildListDelegate([
+              _FeatureCard(
+                title: 'Phiên dịch AI',
+                subtitle: 'Dịch văn bản và giọng nói đa ngôn ngữ',
+                icon: Icons.translate_rounded,
+                gradient: const [Color(0xFF2563EB), Color(0xFF4F46E5)],
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const InterpreterScreen()),
+                ),
               ),
-            );
-          },
-        ),
-        _buildFeatureCard(
-          context,
-          'Công cụ dịch',
-          'Dịch đa ngôn ngữ thời gian thực',
-          Icons.translate_outlined,
-          const Color(0xFF2979FF),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Tính năng dịch đang phát triển...'),
-                duration: Duration(seconds: 2),
+              _FeatureCard(
+                title: 'Trợ lý giọng nói',
+                subtitle: 'Hội thoại thời gian thực với Xiaozhi',
+                icon: Icons.graphic_eq_rounded,
+                gradient: const [Color(0xFF7C3AED), Color(0xFFDB2777)],
+                onTap: () => _showTip(context, 'Mở một cuộc trò chuyện Xiaozhi ở tab Tin nhắn.'),
               ),
-            );
-          },
-        ),
-        _buildFeatureCard(
-          context,
-          'Trợ lý giọng nói',
-          'Tương tác giọng nói thông minh',
-          Icons.mic_outlined,
-          const Color(0xFF6200EA),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Tính năng trợ lý giọng nói đang phát triển...'),
-                duration: Duration(seconds: 2),
+              _FeatureCard(
+                title: 'Phân tích tài liệu',
+                subtitle: 'Đọc, tóm tắt và hỏi đáp theo tài liệu',
+                icon: Icons.description_rounded,
+                gradient: const [Color(0xFF059669), Color(0xFF0D9488)],
+                onTap: () => _showTip(context, 'Kết nối Dify Knowledge Base để dùng tài liệu chuyên sâu.'),
               ),
-            );
-          },
-        ),
-        _buildFeatureCard(
-          context,
-          'Phân tích tài liệu',
-          'Phân tích nội dung tài liệu bằng AI',
-          Icons.description_outlined,
-          const Color(0xFF00BFA5),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Tính năng phân tích tài liệu đang phát triển...'),
-                duration: Duration(seconds: 2),
+              _FeatureCard(
+                title: 'Chẩn đoán Voice',
+                subtitle: 'MIC → ASR → Agent → Tool → TTS',
+                icon: Icons.monitor_heart_outlined,
+                gradient: const [Color(0xFFEA580C), Color(0xFFDC2626)],
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DiagnosticsScreen()),
+                ),
               ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFeatureCard(
-    BuildContext context,
-    String title,
-    String subtitle,
-    IconData icon,
-    Color color, {
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [color, color.withOpacity(0.8)],
+              _FeatureCard(
+                title: 'Knowledge Base',
+                subtitle: 'Kho tri thức cho Agent và tài liệu nội bộ',
+                icon: Icons.menu_book_rounded,
+                gradient: const [Color(0xFF0891B2), Color(0xFF0284C7)],
+                onTap: () => _showTip(context, 'Quản lý Knowledge Base trên Xiaozhi/Dify rồi gắn cho Agent.'),
+              ),
+              _FeatureCard(
+                title: 'Tool / MCP',
+                subtitle: 'Mở rộng xổ số, thời tiết, khách sạn và API',
+                icon: Icons.extension_rounded,
+                gradient: const [Color(0xFF475569), Color(0xFF111827)],
+                onTap: () => _showTip(context, 'Tool realtime nên triển khai qua MCP/API thay vì tài liệu tĩnh.'),
+              ),
+            ]),
           ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: color.withOpacity(0.3),
-              blurRadius: 10,
-              spreadRadius: 0,
-              offset: const Offset(0, 4),
-            ),
-          ],
         ),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -20,
-              bottom: -20,
-              child: Icon(
-                icon,
-                size: 100,
-                color: Colors.white.withOpacity(0.2),
-              ),
+        const SliverPadding(
+          padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+          sliver: SliverToBoxAdapter(
+            child: Text(
+              'Thiết kế cho AI Box',
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
             ),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+          sliver: SliverList(
+            delegate: SliverChildListDelegate([
+              _SimpleTile(
+                icon: Icons.hotel_rounded,
+                title: 'Khách sạn',
+                subtitle: 'Sẵn sàng tích hợp phòng trống, dọn phòng, doanh thu qua Tool/API.',
+              ),
+              _SimpleTile(
+                icon: Icons.confirmation_number_outlined,
+                title: 'Xổ số realtime',
+                subtitle: 'Thiết kế theo Tool realtime; không dùng knowledge base tĩnh cho kết quả hôm nay.',
+              ),
+              _SimpleTile(
+                icon: Icons.security_rounded,
+                title: 'Bảo mật cấu hình',
+                subtitle: 'Không hiển thị token đầy đủ trên giao diện chẩn đoán.',
+              ),
+            ]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static void _showTip(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _FeatureCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final List<Color> gradient;
+  final VoidCallback onTap;
+
+  const _FeatureCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.gradient,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: onTap,
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: gradient,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: LayoutBuilder(
+              builder: (context, constraints) => Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(icon, color: Colors.white, size: 28),
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(.16),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(icon, color: Colors.white),
+                  ),
                   const Spacer(),
                   Text(
                     title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontWeight: FontWeight.bold,
                       fontSize: 16,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 5),
                   Text(
                     subtitle,
+                    maxLines: constraints.maxHeight < 150 ? 2 : 3,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
+                      color: Colors.white.withOpacity(.84),
                       fontSize: 12,
+                      height: 1.25,
                     ),
                   ),
                 ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildRecommendations(BuildContext context) {
-    return SizedBox(
-      height: 180,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: [
-          _buildRecommendationCard(
-            context,
-            'Trợ lý viết AI',
-            'Giúp bài viết chuyên nghiệp hơn',
-            'assets/images/writing.png',
-            const Color(0xFFE91E63),
-          ),
-          _buildRecommendationCard(
-            context,
-            'Nhắc việc thông minh',
-            'Không bỏ lỡ việc quan trọng',
-            'assets/images/reminder.png',
-            const Color(0xFF4CAF50),
-          ),
-          _buildRecommendationCard(
-            context,
-            'Ghi chú giọng nói',
-            'Ghi lại ý tưởng mọi lúc mọi nơi',
-            'assets/images/voice_note.png',
-            const Color(0xFF3F51B5),
-          ),
-        ],
-      ),
-    );
-  }
+class _SimpleTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  const _SimpleTile({required this.icon, required this.title, required this.subtitle});
 
-  Widget _buildRecommendationCard(
-    BuildContext context,
-    String title,
-    String description,
-    String imagePath,
-    Color color,
-  ) {
-    return Container(
-      width: 200,
-      margin: const EdgeInsets.only(right: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 10,
-            spreadRadius: 0,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('$title Tính năng đang phát triển...'),
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-            },
-            splashColor: color.withOpacity(0.1),
-            highlightColor: color.withOpacity(0.1),
-            child: Stack(
-              children: [
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(height: 6, color: color),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: color.withOpacity(0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Center(
-                          child: Icon(
-                            Icons.auto_awesome,
-                            color: color,
-                            size: 28,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        description,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const Spacer(),
-                          Icon(Icons.arrow_forward, size: 16, color: color),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CircleAvatar(child: Icon(icon)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(subtitle),
       ),
     );
   }

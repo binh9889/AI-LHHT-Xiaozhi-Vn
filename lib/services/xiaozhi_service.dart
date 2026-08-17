@@ -380,7 +380,7 @@ class XiaozhiService {
     } catch (e) {
       print('$TAG: 发送listenTin nhắnThất bại: $e');
       _dispatchEvent(
-        XiaozhiServiceEvent(XiaozhiServiceEventType.error, '发送listenTin nhắnThất bại: $e'),
+        XiaozhiServiceEvent(XiaozhiServiceEventType.error, 'Không thể gửi lệnh nghe: $e'),
       );
     }
   }
@@ -395,7 +395,7 @@ class XiaozhiService {
         await Future.delayed(const Duration(milliseconds: 500));
         if (_sessionId == null) {
           print('$TAG: Cuộc trò chuyệnID仍然为空，放弃开始监听');
-          throw Exception('Cuộc trò chuyệnID为空，无法开始录音');
+          throw Exception('Phiên thoại chưa sẵn sàng để ghi âm');
         }
       }
 
@@ -449,7 +449,7 @@ class XiaozhiService {
       print('$TAG: 已发送开始监听Tin nhắn (Giọng nói通话Chế độ)');
     } catch (e) {
       print('$TAG: 开始监听Thất bại: $e');
-      throw Exception('开始Giọng nói输入Thất bại: $e');
+      throw Exception('Không thể bắt đầu nhập giọng nói: $e');
     }
   }
 
@@ -735,7 +735,7 @@ class XiaozhiService {
       });
     } catch (e) {
       print('$TAG: 开始监听Thất bại: $e');
-      throw Exception('开始Giọng nói输入Thất bại: $e');
+      throw Exception('Không thể bắt đầu nhập giọng nói: $e');
     }
   }
 

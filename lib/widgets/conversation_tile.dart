@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:timeago/timeago.dart' as timeago;
 import 'package:ai_assistant/models/conversation.dart';
-import 'package:ai_assistant/models/xiaozhi_config.dart';
-import 'package:ai_assistant/models/dify_config.dart';
 import 'package:ai_assistant/providers/config_provider.dart';
 
 class ConversationTile extends StatelessWidget {
@@ -20,195 +17,151 @@ class ConversationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade100),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 4,
-            spreadRadius: 0,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                _buildAvatar(),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Text(
-                                  conversation.title,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                _buildTypeTag(context),
-                              ],
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _avatar(context),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
                             ),
                           ),
-                          Text(
-                            _formatTime(conversation.lastMessageTime),
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey.shade500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        conversation.lastMessage,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
                         ),
-                      ),
-                    ],
-                  ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatTime(conversation.lastMessageTime),
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Flexible(child: _typeChip(context)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            conversation.lastMessage.isEmpty
+                                ? 'Chưa có tin nhắn'
+                                : conversation.lastMessage,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                Container(
-                  margin: const EdgeInsets.only(left: 8),
-                  child: Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey.shade300,
-                    size: 20,
-                  ),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right_rounded, size: 22),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildTypeTag(BuildContext context) {
-    final bool isDify = conversation.type == ConversationType.dify;
-    String label = isDify ? 'Văn bản' : 'Giọng nói';
+  Widget _avatar(BuildContext context) {
+    final color = switch (conversation.type) {
+      ConversationType.dify => Colors.blue,
+      ConversationType.minimax => Colors.teal,
+      ConversationType.xiaozhi => Colors.deepPurple,
+    };
+    final icon = switch (conversation.type) {
+      ConversationType.dify => Icons.chat_bubble_outline_rounded,
+      ConversationType.minimax => Icons.auto_awesome_rounded,
+      ConversationType.xiaozhi => Icons.mic_rounded,
+    };
+    return CircleAvatar(
+      radius: 24,
+      backgroundColor: color.withOpacity(.12),
+      child: Icon(icon, color: color),
+    );
+  }
 
-    // 如果有cấu hìnhID且不为空，则显示Tên cấu hình
+  Widget _typeChip(BuildContext context) {
+    final provider = Provider.of<ConfigProvider>(context, listen: false);
+    var label = switch (conversation.type) {
+      ConversationType.dify => 'Dify',
+      ConversationType.minimax => 'MiniMax',
+      ConversationType.xiaozhi => 'Xiaozhi',
+    };
+
     if (conversation.configId.isNotEmpty) {
-      final configProvider = Provider.of<ConfigProvider>(
-        context,
-        listen: false,
-      );
-
-      if (isDify) {
-        // 尝试查找匹配的Cấu hình Dify
-        final matchingConfig =
-            configProvider.difyConfigs
-                .where((config) => config.id == conversation.configId)
-                .firstOrNull;
-        if (matchingConfig != null) {
-          label = '${matchingConfig.name}';
+      if (conversation.type == ConversationType.dify) {
+        for (final item in provider.difyConfigs) {
+          if (item.id == conversation.configId) label = item.name;
+        }
+      } else if (conversation.type == ConversationType.minimax) {
+        for (final item in provider.minimaxConfigs) {
+          if (item.id == conversation.configId) label = item.name;
         }
       } else {
-        // 尝试查找匹配的Xiaozhicấu hình
-        final matchingConfig =
-            configProvider.xiaozhiConfigs
-                .where((config) => config.id == conversation.configId)
-                .firstOrNull;
-        if (matchingConfig != null) {
-          label = '${matchingConfig.name}';
+        for (final item in provider.xiaozhiConfigs) {
+          if (item.id == conversation.configId) label = item.name;
         }
       }
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      constraints: const BoxConstraints(maxWidth: 110),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: isDify ? Colors.blue.shade50 : Colors.purple.shade50,
-        borderRadius: BorderRadius.circular(4),
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          fontSize: 12,
-          color: isDify ? Colors.blue.shade600 : Colors.purple.shade600,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.onSecondaryContainer,
         ),
       ),
     );
   }
 
-  Widget _buildAvatar() {
-    if (conversation.type == ConversationType.dify) {
-      return CircleAvatar(
-        radius: 24,
-        backgroundColor: Colors.blue.shade400,
-        child: const Icon(
-          Icons.chat_bubble_outline,
-          color: Colors.white,
-          size: 24,
-        ),
-      );
-    } else {
-      return CircleAvatar(
-        radius: 24,
-        backgroundColor: Colors.purple.shade400,
-        child: const Icon(Icons.mic, color: Colors.white, size: 24),
-      );
-    }
-  }
-
   String _formatTime(DateTime dateTime) {
     final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inDays > 0 && difference.inDays <= 1) {
-      return '昨天';
-    } else if (difference.inDays > 1 && difference.inDays <= 7) {
-      return '周${_getWeekday(dateTime.weekday)}';
-    } else {
-      // 当天显示时间
-      final hour = dateTime.hour.toString().padLeft(2, '0');
-      final minute = dateTime.minute.toString().padLeft(2, '0');
-      return '$hour:$minute';
+    final startToday = DateTime(now.year, now.month, now.day);
+    final day = DateTime(dateTime.year, dateTime.month, dateTime.day);
+    final delta = startToday.difference(day).inDays;
+    if (delta == 0) {
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
     }
-  }
-
-  String _getWeekday(int weekday) {
-    switch (weekday) {
-      case 1:
-        return '一';
-      case 2:
-        return '二';
-      case 3:
-        return '三';
-      case 4:
-        return '四';
-      case 5:
-        return '五';
-      case 6:
-        return '六';
-      case 7:
-        return '日';
-      default:
-        return '';
+    if (delta == 1) return 'Hôm qua';
+    if (delta < 7) {
+      const days = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+      return days[dateTime.weekday - 1];
     }
+    return '${dateTime.day.toString().padLeft(2, '0')}/${dateTime.month.toString().padLeft(2, '0')}';
   }
 }

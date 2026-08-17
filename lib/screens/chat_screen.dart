@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ai_assistant/utils/vietnamese_transcript_normalizer.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:math';
@@ -223,18 +224,32 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } else if (event.type == XiaozhiServiceEventType.userMessage) {
       // 处理用户的Giọng nói识别Văn bản
-      String content = event.data as String;
-      print('收到用户Giọng nói识别内容: $content');
+      final rawContent = event.data as String;
+      final normalization = VietnameseTranscriptNormalizer.normalize(rawContent);
+      final content = normalization.normalized;
+      print('ASR raw: ${normalization.raw}');
+      if (normalization.changed) {
+        print('ASR normalized: ${normalization.normalized}');
+      }
 
-      // 只有在Giọng nói输入Chế độ下才Thêm用户Tin nhắn
       if (content.isNotEmpty && _isVoiceInputMode) {
-        // Giọng nóiTin nhắn可能有延迟，使用Future.microtask确保UIĐã cập nhật
-        Future.microtask(() {
-          conversationProvider.addMessage(
+        Future.microtask(() async {
+          await conversationProvider.addMessage(
             conversationId: widget.conversation.id,
             role: MessageRole.user,
             content: content,
           );
+
+          // Nếu chỉ sửa một lỗi ASR có độ tin cậy cao, ngắt phản hồi dựa trên
+          // transcript sai và gửi lại transcript đã chuẩn hóa dưới dạng text.
+          if (normalization.changed && _xiaozhiService != null) {
+            try {
+              await _xiaozhiService!.sendAbortMessage();
+              await _xiaozhiService!.sendTextMessage(content);
+            } catch (e) {
+              print('Không thể gửi transcript đã chuẩn hóa: $e');
+            }
+          }
         });
       }
     } else if (event.type == XiaozhiServiceEventType.connected ||
@@ -396,18 +411,21 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.conversation.title,
-                          style: const TextStyle(
-                            color: Colors.black,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 17,
+                            ),
                           ),
-                        ),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -430,7 +448,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             style: TextStyle(color: Colors.grey, fontSize: 12),
                           ),
                         ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 )
@@ -490,18 +509,21 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              configName,
-                              style: const TextStyle(
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                configName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 17,
+                                ),
                               ),
-                            ),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -527,7 +549,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                               ),
                             ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     );
@@ -1064,8 +1087,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // 开始录音
       await _xiaozhiService!.startListening();
     } catch (e) {
-      print('开始录音Thất bại: $e');
-      _showCustomSnackbar('无法开始录音: ${e.toString()}');
+      print('Không thể bắt đầu ghi âm: $e');
+      _showCustomSnackbar('Không thể bắt đầu ghi âm: ${e.toString()}');
       setState(() {
         _isRecording = false;
         _isVoiceInputMode = false;
@@ -1092,7 +1115,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom();
     } catch (e) {
       print('停止录音Thất bại: $e');
-      _showCustomSnackbar('Giọng nói发送Thất bại: ${e.toString()}');
+      _showCustomSnackbar('Gửi giọng nói thất bại: ${e.toString()}');
 
       // 出错时关闭Giọng nói输入Chế độ
       setState(() {
@@ -1154,7 +1177,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _resetConversation() async {
     // 给用户一个清晰的提示
-    _showCustomSnackbar('正在Bắt đầu cuộc trò chuyện mới...');
+    _showCustomSnackbar('Đang bắt đầu cuộc trò chuyện mới...');
 
     final conversationProvider = Provider.of<ConversationProvider>(
       context,
@@ -1188,7 +1211,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _showCustomSnackbar('Đã bắt đầu cuộc trò chuyện mới');
     } else {
-      _showCustomSnackbar('cấu hìnhChưa thiết lập，无法đặt lại对话');
+      _showCustomSnackbar('Chưa có cấu hình phù hợp để đặt lại cuộc trò chuyện');
     }
   }
 
@@ -1301,7 +1324,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await conversationProvider.addMessage(
         conversationId: widget.conversation.id,
         role: MessageRole.assistant,
-        content: '发生Lỗi: ${e.toString()}',
+        content: 'Đã xảy ra lỗi: ${e.toString()}',
       );
     } finally {
       if (!mounted) return;
@@ -1654,7 +1677,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await conversationProvider.addMessage(
         conversationId: widget.conversation.id,
         role: MessageRole.user,
-        content: "[图片上传中...]",
+        content: "[Đang tải ảnh lên...]",
         isImage: true,
         imageLocalPath: localPath,
       );
@@ -1690,7 +1713,7 @@ class _ChatScreenState extends State<ChatScreen> {
           content: chatResponse,
         );
       } else {
-        throw Exception("上传Thành công但服务器未返回文件ID: $response");
+        throw Exception("Tải lên thành công nhưng máy chủ không trả về file ID: $response");
       }
 
       _showCustomSnackbar('Tải ảnh lên thành công');
