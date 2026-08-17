@@ -28,6 +28,7 @@ class XiaozhiWebSocketManager {
   WebSocketChannel? _channel;
   String? _serverUrl;
   String? _deviceId;
+  String? _clientId;
   String? _token;
   bool _enableToken;
 
@@ -37,9 +38,13 @@ class XiaozhiWebSocketManager {
   StreamSubscription? _streamSubscription;
 
   /// 构造函数
-  XiaozhiWebSocketManager({required String deviceId, bool enableToken = false})
-    : _deviceId = deviceId,
-      _enableToken = enableToken;
+  XiaozhiWebSocketManager({
+    required String deviceId,
+    required String clientId,
+    bool enableToken = false,
+  })  : _deviceId = deviceId,
+        _clientId = clientId,
+        _enableToken = enableToken;
 
   /// Thêm事件监听器
   void addListener(XiaozhiWebSocketListener listener) {
@@ -83,29 +88,26 @@ class XiaozhiWebSocketManager {
       Uri uri = Uri.parse(url);
 
       print('$TAG: 正在连接 $url');
-      print('$TAG: 设备ID: $_deviceId');
-      print('$TAG: Token启用: $_enableToken');
-
-      if (_enableToken) {
-        print('$TAG: 使用Token: $token');
-      }
+      print('$TAG: Device-Id: $_deviceId');
+      print('$TAG: Client-Id: $_clientId');
+      print('$TAG: Token enabled: $_enableToken');
 
       // 尝试使用headers (这在非Web平台上有效)
       try {
         // 创建headers
         Map<String, dynamic> headers = {
-          'device-id': _deviceId ?? '',
-          'client-id': _deviceId ?? '',
-          'protocol-version': '1',
+          'Device-Id': _deviceId ?? '',
+          'Client-Id': _clientId ?? '',
+          'Protocol-Version': '1',
         };
 
         // ThêmAuthorization头，参考Java实现
         if (_enableToken && token.isNotEmpty) {
           headers['Authorization'] = 'Bearer $token';
-          print('$TAG: ThêmAuthorization头: Bearer $token');
+          print('$TAG: Authorization header enabled');
         } else {
           headers['Authorization'] = 'Bearer test-token';
-          print('$TAG: Thêm默认Authorization头: Bearer test-token');
+          print('$TAG: Using test-token fallback');
         }
 
         // 使用IOWebSocketChannel并传递headers
@@ -126,12 +128,15 @@ class XiaozhiWebSocketManager {
             String authMessage =
                 'Authorization: Bearer ${_enableToken && token.isNotEmpty ? token : "test-token"}';
             _channel!.sink.add(authMessage);
-            print('$TAG: 发送认证Tin nhắn: $authMessage');
+            print('$TAG: Đã gửi Authorization fallback [đã ẩn token]');
 
             // 发送设备ID信息
             String deviceIdMessage = 'Device-ID: $_deviceId';
             _channel!.sink.add(deviceIdMessage);
-            print('$TAG: 发送设备IDTin nhắn: $deviceIdMessage');
+            String clientIdMessage = 'Client-ID: $_clientId';
+            _channel!.sink.add(clientIdMessage);
+            _channel!.sink.add('Protocol-Version: 1');
+            print('$TAG: Đã gửi Device-ID/Client-ID fallback');
           }
         });
       }

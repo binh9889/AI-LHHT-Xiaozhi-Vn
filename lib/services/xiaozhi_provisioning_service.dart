@@ -1,5 +1,7 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+
 import '../utils/device_util.dart';
 
 class XiaozhiProvisioningResult {
@@ -10,7 +12,12 @@ class XiaozhiProvisioningResult {
   final String? token;
   final String? activationCode;
   final String? activationMessage;
+  final String? activationChallenge;
+  final int? activationTimeoutMs;
   final bool isTestCredential;
+  final bool isHealthResponse;
+  final int httpStatus;
+  final String finalUrl;
   final Map<String, dynamic> raw;
 
   const XiaozhiProvisioningResult({
@@ -21,28 +28,41 @@ class XiaozhiProvisioningResult {
     required this.token,
     required this.activationCode,
     required this.activationMessage,
+    required this.activationChallenge,
+    required this.activationTimeoutMs,
     required this.isTestCredential,
+    required this.isHealthResponse,
+    required this.httpStatus,
+    required this.finalUrl,
     required this.raw,
   });
 
   bool get hasActivationCode =>
       activationCode != null && activationCode!.trim().isNotEmpty;
 
+  bool get hasActivationChallenge =>
+      activationChallenge != null && activationChallenge!.trim().isNotEmpty;
+
   bool get canConnect =>
-      websocketUrl != null && websocketUrl!.trim().isNotEmpty &&
-      token != null && token!.trim().isNotEmpty;
+      websocketUrl != null &&
+      websocketUrl!.trim().isNotEmpty &&
+      token != null &&
+      token!.trim().isNotEmpty;
 }
 
-/// Provisioning layer for Xiaozhi-compatible OTA endpoints.
+/// Xiaozhi official OTA/provisioning client for a phone-class device.
 ///
-/// The official ESP32 firmware uses a JSON POST request to the OTA URL and
-/// expects device metadata, activation version, and optional serial number.
-/// This implementation mirrors that protocol while keeping Android-compatible
-/// field names when the ESP32-specific fields do not exist on mobile.
+/// Important protocol choice:
+/// - Official ESP32 firmware sends Activation-Version=2 ONLY when it owns a
+///   factory serial number backed by the ESP32 HMAC/eFuse key.
+/// - A normal Android phone does not have that Xiaozhi factory HMAC identity.
+/// - Therefore this client deliberately uses Activation-Version=1 and DOES NOT
+///   invent a Serial-Number or HMAC key. This is the closest legitimate match
+///   to the official firmware's non-serial-number activation path.
 class XiaozhiProvisioningService {
-  static const String TAG = 'XiaozhiProvisioning';
   static const String officialOtaUrl =
       'https://api.tenclass.net/xiaozhi/ota/';
+  static const String appVersion = '2.2.0';
 
   static Future<XiaozhiProvisioningResult> provision({
     String otaUrl = officialOtaUrl,
@@ -51,64 +71,94 @@ class XiaozhiProvisioningService {
     final clientId = await DeviceUtil.getStableClientId();
     final model = await DeviceUtil.getDeviceModel();
     final os = await DeviceUtil.getOsVersion();
-    final serialNumber = _stableSerialNumber(deviceId, clientId);
-    final requestBody = _buildSystemInfoPayload(
-      deviceId: deviceId,
-      clientId: clientId,
-      model: model,
-      osVersion: os,
-      language: 'vi-VN',
-      version: '2.1.0',
-    );
-    final requestJson = jsonEncode(requestBody);
-    final userAgent = 'xiaozhi-android-client/2.1.0 ($model; $os)';
+
+    final uri = Uri.parse(otaUrl);
     final headers = <String, String>{
       'Accept': 'application/json',
-      'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
-      'User-Agent': userAgent,
+      'Accept-Language': 'vi-VN',
+      'User-Agent': 'xiaozhi-android-client/$appVersion ($model; $os)',
+      'Activation-Version': '1',
       'Device-Id': deviceId,
       'Client-Id': clientId,
-      'Activation-Version': '2',
-      'Serial-Number': serialNumber,
       'Content-Type': 'application/json',
     };
 
-    final uri = Uri.parse(otaUrl);
+    // Mirrors the structure of Board::GetSystemInfoJson() where it makes sense
+    // on Android. ESP-only values are represented conservatively rather than
+    // fabricated as real flash/heap/eFuse values.
+    final payload = <String, dynamic>{
+      'version': 2,
+      'language': 'vi-VN',
+      'flash_size': 0,
+      'minimum_free_heap_size': '0',
+      'mac_address': deviceId,
+      'uuid': clientId,
+      'chip_model_name': 'android',
+      'chip_info': <String, dynamic>{
+        'model': 0,
+        'cores': 0,
+        'revision': 0,
+        'features': 0,
+      },
+      'application': <String, dynamic>{
+        'name': 'ai_assistant',
+        'version': appVersion,
+        'compile_time': DateTime.now().toUtc().toIso8601String(),
+        'idf_version': 'android',
+        'elf_sha256': '',
+      },
+      'partition_table': <dynamic>[],
+      'ota': <String, dynamic>{'label': 'android'},
+      'display': <String, dynamic>{
+        'monochrome': false,
+        'width': 0,
+        'height': 0,
+      },
+      'board': <String, dynamic>{
+        'type': 'android',
+        'device_model': model,
+        'os_version': os,
+      },
+    };
 
-    print('$TAG: method=POST');
-    print('$TAG: url=$uri');
-    print('$TAG: headers={Accept: application/json, Accept-Language: vi-VN,vi;q=0.9,en;q=0.8, User-Agent: $userAgent, Device-Id: $deviceId, Client-Id: $clientId, Activation-Version: 2, Serial-Number: $serialNumber, Content-Type: application/json}');
-    print('$TAG: body=$requestJson');
+    // Keep logs useful without exposing access tokens.
+    print('XiaozhiProvisioning: POST $uri');
+    print('XiaozhiProvisioning: Device-Id=$deviceId Client-Id=$clientId');
+    print('XiaozhiProvisioning: Activation-Version=1');
+    print('XiaozhiProvisioning: body=${jsonEncode(payload)}');
 
     final response = await http
-        .post(
-          uri,
-          headers: headers,
-          body: requestJson,
-        )
+        .post(uri, headers: headers, body: jsonEncode(payload))
         .timeout(const Duration(seconds: 20));
 
-    final finalUrl = response.request?.url.toString() ?? uri.toString();
-    print('$TAG: status=${response.statusCode}');
-    print('$TAG: final_url=$finalUrl');
-    print('$TAG: response_headers=${response.headers}');
-    print('$TAG: raw_response=${response.body}');
+    final bodyText = utf8.decode(response.bodyBytes);
+    final finalUrl = response.request?.url.toString() ?? otaUrl;
+    print(
+      'XiaozhiProvisioning: HTTP ${response.statusCode} finalUrl=$finalUrl',
+    );
+    print('XiaozhiProvisioning: raw=$bodyText');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(
-        'OTA HTTP ${response.statusCode}: ${response.body}',
-      );
+      throw Exception('OTA HTTP ${response.statusCode}: $bodyText');
     }
 
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map<String, dynamic>) {
+    final dynamic decodedDynamic;
+    try {
+      decodedDynamic = jsonDecode(bodyText);
+    } catch (_) {
+      throw Exception('Phản hồi OTA không phải JSON hợp lệ: $bodyText');
+    }
+
+    if (decodedDynamic is! Map) {
       throw Exception('Phản hồi OTA không phải JSON object hợp lệ.');
     }
+    final decoded = decodedDynamic.map<String, dynamic>(
+      (key, value) => MapEntry(key.toString(), value),
+    );
 
     final websocket = _asMap(decoded['websocket']);
     final activation = _asMap(decoded['activation']);
     final mqtt = _asMap(decoded['mqtt']);
-    final firmware = _asMap(decoded['firmware']);
 
     final wsUrl = _readString(websocket, ['url', 'endpoint']);
     final token = _readString(websocket, ['token', 'access_token']);
@@ -120,11 +170,16 @@ class XiaozhiProvisioningService {
       activation,
       ['message', 'text', 'instruction'],
     );
+    final activationChallenge = _readString(activation, ['challenge']);
+    final activationTimeoutMs = _readInt(activation, ['timeout_ms']);
+
     final mqttClientId = _readString(mqtt, ['client_id']) ?? '';
-    final firmwareVersion = _readString(firmware, ['version']) ??
-        _readString(decoded, ['firmware_version', 'version']) ??
-        '';
     final isTest = token == 'test-token' || mqttClientId.contains('GID_test');
+    final isHealth = decoded['status']?.toString() == 'ok' &&
+        decoded['message']?.toString().toLowerCase().contains('server is working') ==
+            true &&
+        websocket.isEmpty &&
+        activation.isEmpty;
 
     return XiaozhiProvisioningResult(
       deviceId: deviceId,
@@ -134,40 +189,14 @@ class XiaozhiProvisioningService {
       token: token,
       activationCode: activationCode,
       activationMessage: activationMessage,
+      activationChallenge: activationChallenge,
+      activationTimeoutMs: activationTimeoutMs,
       isTestCredential: isTest,
+      isHealthResponse: isHealth,
+      httpStatus: response.statusCode,
+      finalUrl: finalUrl,
       raw: decoded,
     );
-  }
-
-  /// Stable serial fallback used when the device has no official hardware serial.
-  /// This is derived from the device/client identity and kept deterministic across
-  /// app restarts so that a service can recognize the same Android device without
-  /// generating a new random serial each run.
-  static String _stableSerialNumber(String deviceId, String clientId) {
-    final seed = '$deviceId:$clientId';
-    final digest = sha256.convert(utf8.encode(seed));
-    return digest.toString().substring(0, 32).toLowerCase();
-  }
-
-  static Map<String, dynamic> _buildSystemInfoPayload({
-    required String deviceId,
-    required String clientId,
-    required String model,
-    required String osVersion,
-    required String language,
-    required String version,
-  }) {
-    return <String, dynamic>{
-      'version': version,
-      'language': language,
-      'mac_address': deviceId,
-      'device_id': deviceId,
-      'uuid': clientId,
-      'client_id': clientId,
-      'platform': 'android',
-      'os_version': osVersion,
-      'device_model': model,
-    };
   }
 
   static Map<String, dynamic> _asMap(dynamic value) {
@@ -184,6 +213,17 @@ class XiaozhiProvisioningService {
       if (value != null && value.toString().trim().isNotEmpty) {
         return value.toString();
       }
+    }
+    return null;
+  }
+
+  static int? _readInt(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      final value = map[key];
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      final parsed = int.tryParse(value?.toString() ?? '');
+      if (parsed != null) return parsed;
     }
     return null;
   }

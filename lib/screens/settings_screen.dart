@@ -2425,6 +2425,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                           websocketUrl,
                           customMacAddress:
                               macAddress.isNotEmpty ? macAddress : null,
+                          customToken: token.isNotEmpty ? token : null,
                         );
 
                         Navigator.pop(context);

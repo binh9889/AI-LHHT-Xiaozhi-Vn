@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'package:ai_assistant/models/xiaozhi_config.dart';
 import 'package:ai_assistant/models/dify_config.dart';
 import 'package:ai_assistant/models/minimax_config.dart';
+import 'package:ai_assistant/utils/device_util.dart';
 
 class ConfigProvider extends ChangeNotifier {
   List<XiaozhiConfig> _xiaozhiConfigs = [];
@@ -35,6 +36,22 @@ class ConfigProvider extends ChangeNotifier {
         xiaozhiConfigsJson
             .map((json) => XiaozhiConfig.fromJson(jsonDecode(json)))
             .toList();
+
+    // Migrate v2.1.x Xiaozhi configs that did not persist Client-Id.
+    if (_xiaozhiConfigs.any((config) => config.clientId.trim().isEmpty)) {
+      final stableClientId = await DeviceUtil.getStableClientId();
+      _xiaozhiConfigs = _xiaozhiConfigs
+          .map(
+            (config) => config.clientId.trim().isEmpty
+                ? config.copyWith(clientId: stableClientId)
+                : config,
+          )
+          .toList();
+      await prefs.setStringList(
+        'xiaozhiConfigs',
+        _xiaozhiConfigs.map((config) => jsonEncode(config.toJson())).toList(),
+      );
+    }
 
     // 加载多个Cấu hình Dify
     final difyConfigsJson = prefs.getStringList('difyConfigs') ?? [];
@@ -95,16 +112,20 @@ class ConfigProvider extends ChangeNotifier {
     String name,
     String websocketUrl, {
     String? customMacAddress,
+    String? customToken,
   }) async {
-    // 如果提供了自定义Địa chỉ MAC，直接使用；否则使用设备ID生成
-    final macAddress = customMacAddress ?? await _getDeviceMacAddress();
+    final macAddress = customMacAddress ?? await DeviceUtil.getStableMacAddress();
+    final clientId = await DeviceUtil.getStableClientId();
 
     final newConfig = XiaozhiConfig(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: name,
       websocketUrl: websocketUrl,
       macAddress: macAddress,
-      token: 'test-token',
+      clientId: clientId,
+      token: (customToken != null && customToken.trim().isNotEmpty)
+          ? customToken.trim()
+          : 'test-token',
     );
 
     _xiaozhiConfigs.add(newConfig);
@@ -116,6 +137,7 @@ class ConfigProvider extends ChangeNotifier {
     required String name,
     required String websocketUrl,
     required String macAddress,
+    required String clientId,
     required String token,
   }) async {
     final existingIndex = _xiaozhiConfigs.indexWhere(
@@ -128,6 +150,7 @@ class ConfigProvider extends ChangeNotifier {
       name: name,
       websocketUrl: websocketUrl,
       macAddress: macAddress,
+      clientId: clientId,
       token: token,
     );
     if (existingIndex >= 0) {

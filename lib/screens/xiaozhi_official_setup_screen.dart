@@ -44,6 +44,7 @@ class _XiaozhiOfficialSetupScreenState
           name: 'Robot Xiaozhi',
           websocketUrl: result.websocketUrl!,
           macAddress: result.deviceId,
+          clientId: result.clientId,
           token: result.token!,
         );
 
@@ -95,7 +96,7 @@ class _XiaozhiOfficialSetupScreenState
             _InfoCard(
               title: 'Danh tính thiết bị',
               child: SelectableText(
-                'Device-ID: ${result.deviceId}\nClient-ID: ${result.clientId}',
+                'Device-ID: ${result.deviceId}\nClient-ID: ${result.clientId}\nHTTP: ${result.httpStatus}\nURL: ${result.finalUrl}',
               ),
             ),
             if (result.hasActivationCode) ...[
@@ -125,6 +126,30 @@ class _XiaozhiOfficialSetupScreenState
                       Text(result.activationMessage!),
                     ],
                   ],
+                ),
+              ),
+            ],
+            if (result.isHealthResponse) ...[
+              const SizedBox(height: 12),
+              const _InfoCard(
+                title: 'Máy chủ chưa trả cấu hình OTA',
+                color: Colors.orange,
+                child: Text(
+                  'Máy chủ chỉ trả trạng thái hoạt động, chưa trả activation/websocket. '
+                  'Bản v2.2.0 đang dùng POST + JSON system info và Activation-Version=1 '
+                  'theo nhánh firmware chính thức không có Serial-Number/HMAC eFuse.',
+                ),
+              ),
+            ],
+            if (result.hasActivationChallenge && !result.hasActivationCode) ...[
+              const SizedBox(height: 12),
+              const _InfoCard(
+                title: 'Máy chủ yêu cầu kích hoạt HMAC',
+                color: Colors.orange,
+                child: Text(
+                  'Máy chủ trả activation challenge nhưng không trả mã 6 số. '
+                  'Android không giả mạo Serial-Number/HMAC eFuse của phần cứng ESP32. '
+                  'Hãy dùng luồng Activation-Version=1 hoặc thiết bị Xiaozhi có khóa HMAC thật.',
                 ),
               ),
             ],

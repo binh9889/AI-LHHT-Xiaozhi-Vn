@@ -183,6 +183,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _xiaozhiService = XiaozhiService(
       websocketUrl: xiaozhiConfig.websocketUrl,
       macAddress: xiaozhiConfig.macAddress,
+      clientId: xiaozhiConfig.clientId,
       token: xiaozhiConfig.token,
     );
 
@@ -554,6 +555,7 @@ class _ChatScreenState extends State<ChatScreen> {
             name: 'Dịch vụ không xác định',
             websocketUrl: '',
             macAddress: '',
+            clientId: '',
             token: '',
           ),
     );

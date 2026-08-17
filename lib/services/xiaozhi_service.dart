@@ -41,11 +41,9 @@ class XiaozhiService {
   static const String TAG = "XiaozhiService";
   static const String DEFAULT_SERVER = "wss://ws.xiaozhi.ai";
 
-  // 单例实例
-  static XiaozhiService? _instance;
-
   final String websocketUrl;
   final String macAddress;
+  final String clientId;
   final String token;
   String? _sessionId; // Cuộc trò chuyệnID将由服务器提供
 
@@ -59,35 +57,18 @@ class XiaozhiService {
   bool _hasStartedCall = false;
   MessageListener? _messageListener;
 
-  /// 工厂构造函数，实现单例Chế độ
-  factory XiaozhiService({
-    required String websocketUrl,
-    required String macAddress,
-    required String token,
-    String? sessionId,
-  }) {
-    _instance ??= XiaozhiService._internal(
-      websocketUrl: websocketUrl,
-      macAddress: macAddress,
-      token: token,
-      sessionId: sessionId,
-    );
-    return _instance!;
-  }
-
-  /// 内部构造函数
-  XiaozhiService._internal({
+  /// Tạo một service riêng cho mỗi cấu hình/cuộc trò chuyện.
+  /// Tránh giữ singleton cũ làm app tiếp tục dùng token hoặc Agent trước đó.
+  XiaozhiService({
     required this.websocketUrl,
     required this.macAddress,
+    required this.clientId,
     required this.token,
     String? sessionId,
   }) {
     _sessionId = sessionId;
     _init();
   }
-
-  /// 获取实例
-  static XiaozhiService? get instance => _instance;
 
   /// 切换到Giọng nói通话Chế độ
   Future<void> switchToVoiceCallMode() async {
@@ -140,6 +121,7 @@ class XiaozhiService {
     // 初始化WebSocket管理器，启用 token
     _webSocketManager = XiaozhiWebSocketManager(
       deviceId: macAddress,
+      clientId: clientId,
       enableToken: true,
     );
 
@@ -185,6 +167,7 @@ class XiaozhiService {
       // 创建WebSocket管理器
       _webSocketManager = XiaozhiWebSocketManager(
         deviceId: macAddress,
+        clientId: clientId,
         enableToken: true,
       );
 
@@ -316,11 +299,12 @@ class XiaozhiService {
       print('$TAG: 正在连接 $websocketUrl');
       print('$TAG: 设备ID: $macAddress');
       print('$TAG: Token启用: true');
-      print('$TAG: 使用Token: $token');
+      print('$TAG: Token: [đã ẩn]');
 
       // 使用 WebSocketManager 连接
       _webSocketManager = XiaozhiWebSocketManager(
         deviceId: macAddress,
+        clientId: clientId,
         enableToken: true,
       );
       _webSocketManager!.addListener(_onWebSocketEvent);
