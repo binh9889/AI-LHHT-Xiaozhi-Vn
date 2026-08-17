@@ -23,6 +23,7 @@ import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:ai_assistant/services/minimax_service.dart';
 import 'package:ai_assistant/widgets/message_bubble.dart';
 import 'package:ai_assistant/screens/voice_call_screen.dart';
+import 'package:ai_assistant/screens/music_player_screen.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
@@ -61,6 +62,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _usingNativeSpeech = false;
   String _nativePartialTranscript = '';
   bool _pendingOnlineMusicSearch = false;
+  DateTime? _suppressAgentRepliesUntil;
 
   // Giọng nói输入相关
   bool _isVoiceInputMode = false;
@@ -253,6 +255,13 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
+      final suppressUntil = _suppressAgentRepliesUntil;
+      if (suppressUntil != null && DateTime.now().isBefore(suppressUntil)) {
+        // Local tool (xổ số/nhạc/thông tin thiết bị) đã nhận quyền xử lý câu
+        // nói. Bỏ phần TTS/text còn sót lại từ Agent cloud sau lệnh abort.
+        return;
+      }
+
       conversationProvider.addMessage(
         conversationId: widget.conversation.id,
         role: MessageRole.assistant,
@@ -262,7 +271,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // Nhánh dự phòng khi native speech của Android không khả dụng.
       final rawContent = (event.data ?? '').toString().trim();
       if (rawContent.isEmpty || !_isVoiceInputMode || _usingNativeSpeech) return;
-      Future.microtask(() => _processVoiceTranscript(rawContent));
+      Future.microtask(() => _processVoiceTranscript(rawContent, fromXiaozhiStt: true));
     } else if (event.type == XiaozhiServiceEventType.connected ||
         event.type == XiaozhiServiceEventType.disconnected) {
       setState(() {});
@@ -273,7 +282,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _processVoiceTranscript(String rawText) async {
+  Future<void> _processVoiceTranscript(
+    String rawText, {
+    bool fromXiaozhiStt = false,
+  }) async {
     if (!mounted) return;
     final conversationProvider = Provider.of<ConversationProvider>(
       context,
@@ -302,30 +314,14 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     _scrollToBottom();
 
+    if (await _handleLocalDeviceInfo(text, conversationProvider)) return;
     if (await _handleRealtimeTool(text, conversationProvider)) return;
 
-    try {
-      if (_xiaozhiService == null) {
-        await _initXiaozhiService();
-      }
-      if (_xiaozhiService != null && !_xiaozhiService!.isConnected) {
-        await _xiaozhiService!.connect();
-      }
-      if (_xiaozhiService == null || !_xiaozhiService!.isConnected) {
-        throw Exception('Xiaozhi chưa kết nối');
-      }
-
-      // Native speech chỉ làm ASR. Gửi transcript sạch cho Agent để phần LLM,
-      // MCP và TTS hiện có vẫn hoạt động như trước.
-      await _xiaozhiService!.sendTextMessage(text);
-    } catch (e) {
-      if (!mounted) return;
-      await conversationProvider.addMessage(
-        conversationId: widget.conversation.id,
-        role: MessageRole.assistant,
-        content: 'Không gửi được câu vừa nhận dạng tới Agent: $e',
-      );
-    }
+    // Audio Xiaozhi đã được server nhận trước khi STT quay về, vì vậy không
+    // bao giờ gửi transcript trở lại bằng `listen/detect`. Nếu một recognizer
+    // cục bộ ngoài chế độ phiên dịch vô tình gọi vào đây, dừng tại transcript
+    // thay vì tạo một request text không thuộc protocol và chờ timeout.
+    return;
   }
 
   Future<bool> _handleRealtimeTool(
@@ -340,6 +336,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _pendingOnlineMusicSearch =
         result.kind == RealtimeToolKind.music && result.requiresFollowUp;
+    _suppressAgentRepliesUntil = DateTime.now().add(const Duration(seconds: 4));
     await _xiaozhiService?.interruptResponse();
 
     await conversationProvider.addMessage(
@@ -350,12 +347,61 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
     await _speakInterpreter(result.text, 'vi-VN');
 
-    if (result.externalUri != null) {
-      final opened = await _realtimeTools.openExternal(result.externalUri!);
-      if (!opened && mounted) {
-        _showCustomSnackbar('Không mở được ứng dụng/trình duyệt phát nhạc.');
+    if (result.kind == RealtimeToolKind.music &&
+        result.externalUri != null &&
+        mounted &&
+        !result.requiresFollowUp) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MusicPlayerScreen(
+            initialUri: result.externalUri!,
+            title: result.text,
+          ),
+        ),
+      );
+    }
+    return true;
+  }
+
+  Future<bool> _handleLocalDeviceInfo(
+    String text,
+    ConversationProvider conversationProvider,
+  ) async {
+    final normalized = text.toLowerCase();
+    final asksDevice = RegExp(
+      r'(mã\s*thiết\s*bị|device\s*-?\s*id|client\s*-?\s*id|địa\s*chỉ\s*mac|mac\s*address|thông\s*tin\s*thiết\s*bị)',
+      caseSensitive: false,
+    ).hasMatch(normalized);
+    if (!asksDevice || widget.conversation.type != ConversationType.xiaozhi) {
+      return false;
+    }
+
+    final provider = Provider.of<ConfigProvider>(context, listen: false);
+    XiaozhiConfig? config;
+    for (final item in provider.xiaozhiConfigs) {
+      if (item.id == widget.conversation.configId) {
+        config = item;
+        break;
       }
     }
+    config ??= provider.xiaozhiConfigs.isNotEmpty ? provider.xiaozhiConfigs.first : null;
+    if (config == null) return false;
+
+    _suppressAgentRepliesUntil = DateTime.now().add(const Duration(seconds: 4));
+    await _xiaozhiService?.interruptResponse();
+    final connected = _xiaozhiService?.isConnected == true ? 'Đã kết nối' : 'Chưa kết nối';
+    final answer = 'Thông tin thiết bị hiện tại:\n'
+        'Device-ID/MAC: ${config.macAddress}\n'
+        'Client-ID: ${config.clientId}\n'
+        'WebSocket: ${config.websocketUrl}\n'
+        'Trạng thái: $connected';
+    await conversationProvider.addMessage(
+      conversationId: widget.conversation.id,
+      role: MessageRole.assistant,
+      content: answer,
+    );
+    _scrollToBottom();
+    await _speakInterpreter(answer, 'vi-VN');
     return true;
   }
 
@@ -480,7 +526,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final translation = TranslationService(provider);
     if (!translation.isAvailable) {
       _showCustomSnackbar(
-        'Chưa có backend dịch. Cần ít nhất Xiaozhi, MiniMax hoặc Dify.',
+        'Chưa có backend dịch khả dụng. Android sẽ dùng ML Kit trên máy; bạn cũng có thể cấu hình MiniMax/Dify.',
       );
       return;
     }
@@ -1490,37 +1536,35 @@ class _ChatScreenState extends State<ChatScreen> {
 
       final requestedLocale =
           _liveInterpreterMode ? _interpreterTurn.sourceLocale : 'vi-VN';
-      final nativeReady = await _nativeSpeech.initialize();
-      if (nativeReady) {
+
+      if (_liveInterpreterMode) {
+        // Phiên dịch bắt buộc native ASR khóa locale theo từng lượt.
+        final nativeReady = await _nativeSpeech.initialize();
+        if (!nativeReady) {
+          throw Exception(
+            'ASR hệ thống chưa sẵn sàng cho phiên dịch. Hãy kiểm tra dịch vụ nhận dạng giọng nói Android.',
+          );
+        }
         _nativePartialTranscript = '';
         _usingNativeSpeech = await _nativeSpeech.start(
           localeId: requestedLocale,
           onResult: (words, isFinal) {
             if (!mounted || words.trim().isEmpty) return;
             _nativePartialTranscript = words.trim();
-            // Chỉ cập nhật state để banner/nút phản ánh đang nghe; không gửi
-            // partial transcript lên Agent.
             if (isFinal) setState(() {});
           },
         );
-      }
-
-      // Trong phiên dịch không được fallback sang ASR cloud tự đoán ngôn ngữ,
-      // vì đó chính là nguyên nhân câu tiếng Trung bị hiểu thành tiếng Việt.
-      if (!_usingNativeSpeech && _liveInterpreterMode) {
-        throw Exception(
-          'Máy chưa mở được ASR $requestedLocale. Hãy cài/ngắt tải ngôn ngữ nhận dạng tương ứng trong Android rồi thử lại.',
-        );
-      }
-
-      // Chat tiếng Việt bình thường vẫn có thể fallback sang Xiaozhi ASR.
-      if (!_usingNativeSpeech) {
-        await _xiaozhiService!.startListening();
-        if (mounted && nativeReady) {
-          _showCustomSnackbar(
-            'ASR hệ thống không mở được $requestedLocale, đang dùng ASR Xiaozhi dự phòng.',
+        if (!_usingNativeSpeech) {
+          throw Exception(
+            'Máy chưa mở được ASR $requestedLocale. Hãy cài ngôn ngữ nhận dạng tương ứng trong Android rồi thử lại.',
           );
         }
+      } else {
+        // Chat Xiaozhi bình thường phải gửi AUDIO theo protocol chính thức.
+        // v3.3 dùng native ASR rồi inject text bằng listen/detect, nhưng detect
+        // là wake-word chứ không phải general text chat => dễ timeout.
+        _usingNativeSpeech = false;
+        await _xiaozhiService!.startListening();
       }
     } catch (e) {
       print('Không thể bắt đầu ghi âm: $e');
@@ -1685,6 +1729,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (widget.conversation.type == ConversationType.xiaozhi &&
+        await _handleLocalDeviceInfo(message, conversationProvider)) {
+      _scrollToBottom();
+      return;
+    }
+
+    if (widget.conversation.type == ConversationType.xiaozhi &&
         await _handleRealtimeTool(message, conversationProvider)) {
       _scrollToBottom();
       return;
@@ -1769,8 +1819,47 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {});
         }
 
-        // 发送Tin nhắn
-        await _xiaozhiService!.sendTextMessage(message);
+        // Protocol Xiaozhi chính thức tập trung vào audio/STT/TTS và không có
+        // general text-chat frame. Không dùng listen/detect để giả lập text nữa.
+        // Với tin gõ, ưu tiên backend API nếu người dùng đã cấu hình; nếu chưa
+        // có thì hướng dẫn dùng mic thay vì chờ 15 giây rồi báo timeout.
+        final provider = Provider.of<ConfigProvider>(context, listen: false);
+        String? typedResponse;
+        if (provider.minimaxConfigs.isNotEmpty) {
+          final config = provider.minimaxConfigs.first;
+          final service = MiniMaxService(apiKey: config.apiKey, model: config.model);
+          typedResponse = await service.sendMessage(
+            message,
+            sessionId: widget.conversation.id,
+            forceNewConversation: false,
+          );
+        } else if (provider.difyConfigs.isNotEmpty) {
+          final config = provider.difyConfigs.first;
+          final service = await DifyService.create(
+            apiKey: config.apiKey,
+            apiUrl: config.apiUrl,
+          );
+          typedResponse = await service.sendMessage(
+            message,
+            sessionId: widget.conversation.id,
+            forceNewConversation: false,
+          );
+        }
+
+        if (typedResponse != null && typedResponse.trim().isNotEmpty) {
+          await conversationProvider.addMessage(
+            conversationId: widget.conversation.id,
+            role: MessageRole.assistant,
+            content: typedResponse.trim(),
+          );
+        } else {
+          await conversationProvider.addMessage(
+            conversationId: widget.conversation.id,
+            role: MessageRole.assistant,
+            content: 'Máy chủ Xiaozhi hiện dùng luồng thoại chính thức. '
+                'Hãy giữ mic để nói; nếu muốn chat bằng bàn phím, cấu hình MiniMax hoặc Dify trong Cài đặt.',
+          );
+        }
       }
     } catch (e) {
       print('聊天屏幕: 发送Tin nhắnLỗi: $e');

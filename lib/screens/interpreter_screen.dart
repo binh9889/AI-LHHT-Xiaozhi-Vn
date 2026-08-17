@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:ai_assistant/providers/config_provider.dart';
 import 'package:ai_assistant/services/native_speech_service.dart';
 import 'package:ai_assistant/services/translation_service.dart';
-import 'package:ai_assistant/services/xiaozhi_service.dart';
 import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -46,7 +45,6 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
   bool _voiceReady = false;
   String _backend = 'Chưa dịch';
   String _voiceStatus = 'Đang chuẩn bị nhận giọng nói...';
-  XiaozhiService? _xiaozhiService;
   late InterpreterTurnController _turn;
 
   @override
@@ -71,22 +69,6 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
             : 'Máy không có dịch vụ nhận dạng giọng nói khả dụng';
       });
     }
-
-    // Giữ một kết nối Xiaozhi làm backend dịch dự phòng. ASR phiên dịch không
-    // dùng kết nối này nữa; nó dùng native speech với locale khóa theo lượt.
-    final provider = Provider.of<ConfigProvider>(context, listen: false);
-    if (provider.xiaozhiConfigs.isEmpty) return;
-    final config = provider.xiaozhiConfigs.first;
-    final service = XiaozhiService(
-      websocketUrl: config.websocketUrl,
-      macAddress: config.macAddress,
-      clientId: config.clientId,
-      token: config.token,
-    );
-    _xiaozhiService = service;
-    try {
-      await service.connect();
-    } catch (_) {}
   }
 
   void _syncTurnPair({bool reset = true}) {
@@ -171,7 +153,7 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     final provider = Provider.of<ConfigProvider>(context, listen: false);
     final service = TranslationService(provider);
     if (!service.isAvailable) {
-      _snack('Hãy cấu hình Xiaozhi, MiniMax hoặc Dify để làm backend dịch.');
+      _snack('Thiết bị chưa có backend dịch khả dụng. Hãy kiểm tra Android ML Kit hoặc cấu hình MiniMax/Dify.');
       return;
     }
 
@@ -192,7 +174,6 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
         sourceLanguage: sourceLanguage,
         targetLanguage: targetLanguage,
         naturalSpeech: _naturalSpeech,
-        existingXiaozhi: _xiaozhiService,
       );
       if (!mounted) return;
       _outputController.text = result.text;
@@ -273,7 +254,6 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     _inputController.dispose();
     _outputController.dispose();
     _tts.stop();
-    _xiaozhiService?.disconnect();
     super.dispose();
   }
 

@@ -4,6 +4,8 @@ import 'package:ai_assistant/providers/config_provider.dart';
 import 'package:ai_assistant/services/dify_service.dart';
 import 'package:ai_assistant/services/minimax_service.dart';
 import 'package:ai_assistant/services/xiaozhi_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 class TranslationResult {
   final String text;
@@ -26,22 +28,34 @@ class ConversationTranslationResult extends TranslationResult {
   });
 }
 
+/// Dịch hai chiều cho AI-LHHT.
+///
+/// v3.4 không còn dùng Xiaozhi `listen/detect` như một API text-chat giả để
+/// phiên dịch. MiniMax/Dify vẫn được ưu tiên nếu người dùng đã cấu hình; trên
+/// Android, Google ML Kit on-device là fallback độc lập và ổn định.
 class TranslationService {
+  TranslationService(this.configProvider);
+
   final ConfigProvider configProvider;
 
-  TranslationService(this.configProvider);
+  static const MethodChannel _mlKitChannel = MethodChannel(
+    'com.lhht.ai_assistant/mlkit_translation',
+  );
+
+  bool get _supportsOnDeviceTranslation =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   bool get isAvailable =>
       configProvider.minimaxConfigs.isNotEmpty ||
       configProvider.difyConfigs.isNotEmpty ||
-      configProvider.xiaozhiConfigs.isNotEmpty;
+      _supportsOnDeviceTranslation;
 
   String get availableBackends {
     final names = <String>[];
     if (configProvider.minimaxConfigs.isNotEmpty) names.add('MiniMax');
     if (configProvider.difyConfigs.isNotEmpty) names.add('Dify');
-    if (configProvider.xiaozhiConfigs.isNotEmpty) names.add('Xiaozhi');
-    return names.isEmpty ? 'Chưa cấu hình' : names.join(' • ');
+    if (_supportsOnDeviceTranslation) names.add('ML Kit trên máy');
+    return names.isEmpty ? 'Chưa có backend tương thích' : names.join(' • ');
   }
 
   Future<TranslationResult> translate({
@@ -56,19 +70,35 @@ class TranslationService {
       throw Exception('Nội dung cần dịch đang trống.');
     }
 
-    final prompt = _buildPrompt(
+    // Nếu đã cấu hình LLM, dùng LLM để có câu hội thoại tự nhiên hơn.
+    // Nếu API chậm/lỗi hoặc chưa cấu hình, rơi xuống ML Kit thay vì dùng
+    // text-injection không thuộc protocol Xiaozhi.
+    if (configProvider.minimaxConfigs.isNotEmpty ||
+        configProvider.difyConfigs.isNotEmpty) {
+      final prompt = _buildPrompt(
+        input,
+        sourceLanguage,
+        targetLanguage,
+        naturalSpeech,
+      );
+      try {
+        final result = await _invokeAiPrompt(prompt);
+        final cleaned = _clean(result.text);
+        if (cleaned.isNotEmpty) {
+          return TranslationResult(text: cleaned, backend: result.backend);
+        }
+      } catch (_) {
+        // Fallback on-device bên dưới.
+      }
+    }
+
+    return _translateOnDevice(
       input,
-      sourceLanguage,
-      targetLanguage,
-      naturalSpeech,
+      sourceLanguage: sourceLanguage,
+      targetLanguage: targetLanguage,
     );
-    final result = await _invokePrompt(prompt, existingXiaozhi: existingXiaozhi);
-    return TranslationResult(text: _clean(result.text), backend: result.backend);
   }
 
-  /// Một lượt phiên dịch hai chiều. AI tự xác định câu hiện tại thuộc ngôn ngữ
-  /// A hay B rồi dịch sang ngôn ngữ còn lại. Đây là API dùng cho chế độ
-  /// "Việt ↔ Anh" trực tiếp trong cuộc trò chuyện.
   Future<ConversationTranslationResult> translateConversationTurn({
     required String text,
     required String languageA,
@@ -83,9 +113,8 @@ class TranslationService {
       throw Exception('Không có câu nói để phiên dịch.');
     }
 
-    // Với các cặp có thể nhận biết chắc chắn bằng ký tự/từ vựng (đặc biệt
-    // Việt ↔ Anh), xác định chiều ngay trên máy. Nhờ vậy nếu backend là
-    // Xiaozhi thì server chỉ nói BẢN DỊCH, không đọc một gói JSON kỹ thuật.
+    // Chế độ hội thoại v3.3+ ưu tiên khóa ASR theo lượt. Hàm này vẫn hỗ trợ
+    // màn hình cũ/auto bằng heuristic, nhưng không gọi Xiaozhi text API.
     if (_canGuessDirection(localeA, localeB)) {
       final fromA = _guessLanguageA(input, localeA, localeB);
       final direct = await translate(
@@ -104,11 +133,14 @@ class TranslationService {
       );
     }
 
-    final style = naturalSpeech
-        ? 'Dịch tự nhiên như người thật đang hội thoại, giữ nguyên tên riêng, số liệu và ý nghĩa.'
-        : 'Dịch sát nghĩa, không tự thêm nội dung.';
-
-    final prompt = '''Bạn là bộ phiên dịch hai chiều thời gian thực.
+    // Với cặp Latin khó đoán, nếu có LLM thì cho LLM xác định chiều. Nếu
+    // không có, giữ fallback A → B để tránh một lỗi JSON làm treo phiên dịch.
+    if (configProvider.minimaxConfigs.isNotEmpty ||
+        configProvider.difyConfigs.isNotEmpty) {
+      final style = naturalSpeech
+          ? 'Dịch tự nhiên như người thật đang hội thoại, giữ nguyên tên riêng, số liệu và ý nghĩa.'
+          : 'Dịch sát nghĩa, không tự thêm nội dung.';
+      final prompt = '''Bạn là bộ phiên dịch hai chiều thời gian thực.
 Hai ngôn ngữ của phiên dịch viên là:
 A = $languageA
 B = $languageB
@@ -125,49 +157,41 @@ hoặc
 
 Câu cần phiên dịch:
 $input''';
-
-    try {
-      final raw = await _invokePrompt(prompt, existingXiaozhi: existingXiaozhi);
-      final parsed = _parseConversationJson(raw.text);
-      final source = (parsed['source'] ?? '').toString().toUpperCase();
-      final translated = (parsed['translation'] ?? '').toString().trim();
-      if ((source == 'A' || source == 'B') && translated.isNotEmpty) {
-        final fromA = source == 'A';
-        return ConversationTranslationResult(
-          text: translated,
-          backend: raw.backend,
-          sourceLanguage: fromA ? languageA : languageB,
-          targetLanguage: fromA ? languageB : languageA,
-          targetLocale: fromA ? localeB : localeA,
-        );
-      }
-    } catch (_) {
-      // Fallback bên dưới. Không để một lỗi JSON làm hỏng cả phiên dịch.
+      try {
+        final raw = await _invokeAiPrompt(prompt);
+        final parsed = _parseConversationJson(raw.text);
+        final source = (parsed['source'] ?? '').toString().toUpperCase();
+        final translated = (parsed['translation'] ?? '').toString().trim();
+        if ((source == 'A' || source == 'B') && translated.isNotEmpty) {
+          final fromA = source == 'A';
+          return ConversationTranslationResult(
+            text: translated,
+            backend: raw.backend,
+            sourceLanguage: fromA ? languageA : languageB,
+            targetLanguage: fromA ? languageB : languageA,
+            targetLocale: fromA ? localeB : localeA,
+          );
+        }
+      } catch (_) {}
     }
 
-    final fromA = _guessLanguageA(input, localeA, localeB);
-    final fallback = await translate(
+    final direct = await translate(
       text: input,
-      sourceLanguage: fromA ? languageA : languageB,
-      targetLanguage: fromA ? languageB : languageA,
+      sourceLanguage: languageA,
+      targetLanguage: languageB,
       naturalSpeech: naturalSpeech,
       existingXiaozhi: existingXiaozhi,
     );
     return ConversationTranslationResult(
-      text: fallback.text,
-      backend: fallback.backend,
-      sourceLanguage: fromA ? languageA : languageB,
-      targetLanguage: fromA ? languageB : languageA,
-      targetLocale: fromA ? localeB : localeA,
+      text: direct.text,
+      backend: direct.backend,
+      sourceLanguage: languageA,
+      targetLanguage: languageB,
+      targetLocale: localeB,
     );
   }
 
-  Future<TranslationResult> _invokePrompt(
-    String prompt, {
-    XiaozhiService? existingXiaozhi,
-  }) async {
-    // Ưu tiên backend API nếu người dùng đã cấu hình vì nó không làm gián đoạn
-    // luồng audio WebSocket đang dùng làm ASR.
+  Future<TranslationResult> _invokeAiPrompt(String prompt) async {
     if (configProvider.minimaxConfigs.isNotEmpty) {
       final config = configProvider.minimaxConfigs.first;
       final service = MiniMaxService(apiKey: config.apiKey, model: config.model);
@@ -193,37 +217,85 @@ $input''';
       return TranslationResult(text: response, backend: 'Dify');
     }
 
-    if (existingXiaozhi != null && existingXiaozhi.isConnected) {
-      final response = await existingXiaozhi.sendTextMessageSilently(prompt);
-      return TranslationResult(text: response, backend: 'Xiaozhi');
-    }
+    throw Exception('Không có backend AI dạng text đã cấu hình.');
+  }
 
-    if (configProvider.xiaozhiConfigs.isNotEmpty) {
-      final config = configProvider.xiaozhiConfigs.first;
-      final service = XiaozhiService(
-        websocketUrl: config.websocketUrl,
-        macAddress: config.macAddress,
-        clientId: config.clientId,
-        token: config.token,
+  Future<TranslationResult> _translateOnDevice(
+    String text, {
+    required String sourceLanguage,
+    required String targetLanguage,
+  }) async {
+    if (!_supportsOnDeviceTranslation) {
+      throw Exception(
+        'Thiết bị này chưa có backend dịch on-device. Hãy cấu hình MiniMax hoặc Dify.',
       );
-      try {
-        await service.connect();
-        for (var i = 0; i < 30 && !service.isConnected; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 150));
-        }
-        if (!service.isConnected) {
-          throw Exception('Xiaozhi chưa sẵn sàng để nhận yêu cầu dịch.');
-        }
-        final response = await service.sendTextMessageSilently(prompt);
-        return TranslationResult(text: response, backend: 'Xiaozhi');
-      } finally {
-        await service.disconnect();
-      }
     }
 
-    throw Exception(
-      'Chưa có dịch vụ AI để phiên dịch. Hãy cấu hình Xiaozhi, MiniMax hoặc Dify.',
-    );
+    final sourceTag = _languageTag(sourceLanguage);
+    final targetTag = _languageTag(targetLanguage);
+    if (sourceTag == null || targetTag == null) {
+      throw Exception(
+        'Chưa hỗ trợ dịch $sourceLanguage → $targetLanguage trên thiết bị.',
+      );
+    }
+
+    try {
+      final translated = await _mlKitChannel.invokeMethod<String>('translate', {
+        'text': text,
+        'sourceTag': sourceTag,
+        'targetTag': targetTag,
+      }).timeout(const Duration(seconds: 45));
+      final output = translated?.trim() ?? '';
+      if (output.isEmpty) {
+        throw Exception('ML Kit trả bản dịch trống.');
+      }
+      return TranslationResult(text: output, backend: 'ML Kit trên máy');
+    } on PlatformException catch (e) {
+      final code = e.code;
+      if (code == 'MODEL_DOWNLOAD_FAILED') {
+        throw Exception(
+          'Không tải được model dịch lần đầu. Hãy bật mạng rồi thử lại.',
+        );
+      }
+      throw Exception(e.message ?? 'Dịch trên thiết bị thất bại ($code).');
+    } on MissingPluginException {
+      throw Exception('APK hiện tại chưa tích hợp ML Kit Translation.');
+    }
+  }
+
+  String? _languageTag(String language) {
+    final value = language.trim().toLowerCase();
+    if (value == 'tiếng việt' || value.startsWith('vi-') || value == 'vi') {
+      return 'vi';
+    }
+    if (value == 'english' || value.startsWith('en-') || value == 'en') {
+      return 'en';
+    }
+    if (value == '中文' || value.contains('trung') || value.startsWith('zh')) {
+      return 'zh';
+    }
+    if (value == '日本語' || value.contains('nhật') || value.startsWith('ja')) {
+      return 'ja';
+    }
+    if (value == '한국어' || value.contains('hàn') || value.startsWith('ko')) {
+      return 'ko';
+    }
+    if (value == 'français' || value.contains('pháp') || value.startsWith('fr')) {
+      return 'fr';
+    }
+    if (value == 'deutsch' || value.contains('đức') || value.startsWith('de')) {
+      return 'de';
+    }
+    if (value == 'español' || value.contains('tây ban nha') || value.startsWith('es')) {
+      return 'es';
+    }
+    if (value == 'ไทย' || value.contains('thái') || value.startsWith('th')) {
+      return 'th';
+    }
+    if (value == 'русский' || value.contains('nga') || value.startsWith('ru')) {
+      return 'ru';
+    }
+    return null;
   }
 
   String _buildPrompt(
@@ -278,9 +350,9 @@ $text''';
 
     if (a.startsWith('vi') || b.startsWith('vi')) {
       final looksVi = RegExp(
-        r'[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]',
-        caseSensitive: false,
-      ).hasMatch(text) ||
+            r'[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]',
+            caseSensitive: false,
+          ).hasMatch(text) ||
           RegExp(
             r'\b(tôi|mình|bạn|anh|chị|em|không|có|là|và|được|muốn|cần|hôm nay|xin chào)\b',
             caseSensitive: false,
@@ -303,8 +375,6 @@ $text''';
       return a.startsWith('ko') ? hasHangul : !hasHangul;
     }
 
-    // Với các cặp Latin khó phân biệt, ưu tiên A. LLM thường đã xử lý được
-    // trước khi rơi xuống fallback này.
     return true;
   }
 

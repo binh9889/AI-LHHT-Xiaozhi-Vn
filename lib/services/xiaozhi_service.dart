@@ -209,99 +209,18 @@ class XiaozhiService {
     }
   }
 
-  /// Gửi một yêu cầu text nhưng không phát audio TTS mà server trả về.
-  /// Dùng khi Xiaozhi chỉ đóng vai trò backend dịch; app sẽ tự phát bản dịch
-  /// bằng FlutterTts với locale đích chính xác.
+  /// Xiaozhi official WebSocket của app này là voice/audio protocol.
+  /// Không dùng `listen/detect` như general text chat vì server có thể không
+  /// trả response và bản cũ sẽ chờ 15 giây rồi báo timeout.
   Future<String> sendTextMessageSilently(String message) async {
-    final previous = _suppressIncomingAudio;
-    _suppressIncomingAudio = true;
-    _suppressedTtsStopCompleter = Completer<void>();
-    try {
-      await AudioUtil.stopPlaying();
-      final result = await sendTextMessage(message);
-      try {
-        await _suppressedTtsStopCompleter!.future.timeout(
-          const Duration(seconds: 5),
-        );
-      } catch (_) {
-        // Một số server không phát event stop. Timeout chỉ để đảm bảo không
-        // giữ trạng thái suppress vô hạn.
-      }
-      await AudioUtil.stopPlaying();
-      return result;
-    } finally {
-      _suppressedTtsStopCompleter = null;
-      _suppressIncomingAudio = previous;
-    }
+    return sendTextMessage(message);
   }
 
-  /// 发送Văn bảnTin nhắn
   Future<String> sendTextMessage(String message) async {
-    if (!_isConnected && _webSocketManager == null) {
-      await connect();
-    }
-
-    try {
-      // 创建一个Completer来等待响应
-      final completer = Completer<String>();
-      bool hasResponse = false;
-
-      print('$TAG: 开始发送Văn bảnTin nhắn: $message');
-
-      // ThêmTin nhắn监听器，监听所有可能的回复
-      void onceListener(XiaozhiServiceEvent event) {
-        if (event.type == XiaozhiServiceEventType.textMessage) {
-          // 忽略echoTin nhắn（即我们发送的Tin nhắn）
-          if (event.data == message) {
-            print('$TAG: 忽略echoTin nhắn: ${event.data}');
-            return;
-          }
-
-          print('$TAG: 收到服务器响应: ${event.data}');
-          if (!completer.isCompleted) {
-            hasResponse = true;
-            completer.complete(event.data as String);
-            removeListener(onceListener);
-          }
-        } else if (event.type == XiaozhiServiceEventType.error &&
-            !completer.isCompleted) {
-          print('$TAG: 收到Lỗi响应: ${event.data}');
-          completer.completeError(event.data.toString());
-          removeListener(onceListener);
-        }
-      }
-
-      // 先Thêm监听器，确保不会错过任何Tin nhắn
-      addListener(onceListener);
-
-      // 发送Văn bản请求
-      print('$TAG: 发送Văn bản请求: $message');
-      _webSocketManager!.sendTextRequest(message);
-
-      // Cài đặt超时，15秒比10秒更宽松一些
-      final timeoutTimer = Timer(const Duration(seconds: 15), () {
-        if (!completer.isCompleted) {
-          print('$TAG: Yêu cầu hết thời gian chờ，15秒内没有收到响应');
-          completer.completeError('Yêu cầu hết thời gian chờ');
-          removeListener(onceListener);
-        }
-      });
-
-      // 等待响应
-      try {
-        final result = await completer.future;
-        // Hủy超时定时器
-        timeoutTimer.cancel();
-        return result;
-      } catch (e) {
-        // Hủy超时定时器
-        timeoutTimer.cancel();
-        rethrow;
-      }
-    } catch (e) {
-      print('$TAG: 发送Tin nhắnThất bại: $e');
-      rethrow;
-    }
+    throw UnsupportedError(
+      'Xiaozhi voice protocol không hỗ trợ general text chat trong client này. '
+      'Hãy dùng luồng mic/audio hoặc MiniMax/Dify cho tin nhắn gõ.',
+    );
   }
 
   /// 连接Giọng nói通话

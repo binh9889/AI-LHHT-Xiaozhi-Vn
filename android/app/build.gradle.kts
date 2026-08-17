@@ -54,3 +54,9 @@ android {
 flutter {
     source = "../.."
 }
+
+
+dependencies {
+    // Dịch on-device làm fallback ổn định cho phiên dịch trực tiếp.
+    implementation("com.google.mlkit:translate:17.0.3")
+}
