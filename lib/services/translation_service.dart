@@ -194,7 +194,7 @@ $input''';
     }
 
     if (existingXiaozhi != null && existingXiaozhi.isConnected) {
-      final response = await existingXiaozhi.sendTextMessage(prompt);
+      final response = await existingXiaozhi.sendTextMessageSilently(prompt);
       return TranslationResult(text: response, backend: 'Xiaozhi');
     }
 
@@ -214,7 +214,7 @@ $input''';
         if (!service.isConnected) {
           throw Exception('Xiaozhi chưa sẵn sàng để nhận yêu cầu dịch.');
         }
-        final response = await service.sendTextMessage(prompt);
+        final response = await service.sendTextMessageSilently(prompt);
         return TranslationResult(text: response, backend: 'Xiaozhi');
       } finally {
         await service.disconnect();

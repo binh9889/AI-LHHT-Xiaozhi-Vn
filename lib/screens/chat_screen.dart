@@ -17,6 +17,9 @@ import 'package:ai_assistant/models/minimax_config.dart';
 import 'package:ai_assistant/services/dify_service.dart';
 import 'package:ai_assistant/services/xiaozhi_service.dart';
 import 'package:ai_assistant/services/translation_service.dart';
+import 'package:ai_assistant/services/native_speech_service.dart';
+import 'package:ai_assistant/services/realtime_tool_service.dart';
+import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:ai_assistant/services/minimax_service.dart';
 import 'package:ai_assistant/widgets/message_bubble.dart';
 import 'package:ai_assistant/screens/voice_call_screen.dart';
@@ -52,6 +55,12 @@ class _ChatScreenState extends State<ChatScreen> {
   String _interpreterLocaleA = 'vi-VN';
   String _interpreterLanguageB = 'English';
   String _interpreterLocaleB = 'en-US';
+  late InterpreterTurnController _interpreterTurn;
+  final NativeSpeechService _nativeSpeech = NativeSpeechService.instance;
+  final RealtimeToolService _realtimeTools = RealtimeToolService();
+  bool _usingNativeSpeech = false;
+  String _nativePartialTranscript = '';
+  bool _pendingOnlineMusicSearch = false;
 
   // Giọng nói输入相关
   bool _isVoiceInputMode = false;
@@ -68,6 +77,14 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _interpreterTurn = InterpreterTurnController(
+      languageA: _interpreterLanguageA,
+      localeA: _interpreterLocaleA,
+      languageB: _interpreterLanguageB,
+      localeB: _interpreterLocaleB,
+    );
+    unawaited(_nativeSpeech.initialize());
+    unawaited(_interpreterTts.awaitSpeakCompletion(true));
 
     // Cài đặt状态栏为透明并使图标为黑色
     SystemChrome.setSystemUIOverlayStyle(
@@ -177,6 +194,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _autoReconnectTimer?.cancel();
     _waveAnimationTimer?.cancel();
     _interpreterTts.stop();
+    _nativeSpeech.cancel();
 
     // 在销毁前确保停止所有音频播放
     if (_xiaozhiService != null) {
@@ -230,9 +248,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // Nếu chính Xiaozhi đang làm backend dịch, sendTextMessage() vẫn nhận
       // textMessage này để hoàn tất Future nhưng UI không thêm trùng bubble.
       if (_liveInterpreterMode) {
-        if (!_interpreterWaitingForXiaozhi) {
-          unawaited(_xiaozhiService?.interruptResponse());
-        }
+        // TranslationService dùng Xiaozhi ở silent mode; không thêm câu trả
+        // lời backend vào chat và cũng không abort giữa chừng.
         return;
       }
 
@@ -242,38 +259,10 @@ class _ChatScreenState extends State<ChatScreen> {
         content: content,
       );
     } else if (event.type == XiaozhiServiceEventType.userMessage) {
-      final rawContent = (event.data ?? '').toString();
-      final normalization = VietnameseTranscriptNormalizer.normalize(rawContent);
-      final content = normalization.normalized.trim();
-      if (content.isEmpty || !_isVoiceInputMode) return;
-
-      Future.microtask(() async {
-        if (await _handleInterpreterVoiceCommand(content, conversationProvider)) {
-          return;
-        }
-
-        if (_liveInterpreterMode) {
-          await _handleLiveInterpreterTurn(content, conversationProvider);
-          return;
-        }
-
-        await conversationProvider.addMessage(
-          conversationId: widget.conversation.id,
-          role: MessageRole.user,
-          content: content,
-        );
-
-        // Nếu chỉ sửa một lỗi ASR có độ tin cậy cao, ngắt phản hồi dựa trên
-        // transcript sai và gửi lại transcript đã chuẩn hóa dưới dạng text.
-        if (normalization.changed && _xiaozhiService != null) {
-          try {
-            await _xiaozhiService!.sendAbortMessage();
-            await _xiaozhiService!.sendTextMessage(content);
-          } catch (e) {
-            print('Không thể gửi transcript đã chuẩn hóa: $e');
-          }
-        }
-      });
+      // Nhánh dự phòng khi native speech của Android không khả dụng.
+      final rawContent = (event.data ?? '').toString().trim();
+      if (rawContent.isEmpty || !_isVoiceInputMode || _usingNativeSpeech) return;
+      Future.microtask(() => _processVoiceTranscript(rawContent));
     } else if (event.type == XiaozhiServiceEventType.connected ||
         event.type == XiaozhiServiceEventType.disconnected) {
       setState(() {});
@@ -282,6 +271,92 @@ class _ChatScreenState extends State<ChatScreen> {
         _showCustomSnackbar('Lỗi phiên dịch/giọng nói: ${event.data}');
       }
     }
+  }
+
+  Future<void> _processVoiceTranscript(String rawText) async {
+    if (!mounted) return;
+    final conversationProvider = Provider.of<ConversationProvider>(
+      context,
+      listen: false,
+    );
+
+    // Trong phiên dịch, KHÔNG normalize câu tiếng Trung bằng luật tiếng Việt.
+    // Ngôn ngữ được khóa theo lượt. Nhánh Xiaozhi ASR chỉ là fallback.
+    final text = _liveInterpreterMode
+        ? rawText.trim()
+        : VietnameseTranscriptNormalizer.normalize(rawText).normalized.trim();
+    if (text.isEmpty) return;
+
+    if (await _handleInterpreterVoiceCommand(text, conversationProvider)) {
+      return;
+    }
+    if (_liveInterpreterMode) {
+      await _handleLiveInterpreterTurn(text, conversationProvider);
+      return;
+    }
+
+    await conversationProvider.addMessage(
+      conversationId: widget.conversation.id,
+      role: MessageRole.user,
+      content: text,
+    );
+    _scrollToBottom();
+
+    if (await _handleRealtimeTool(text, conversationProvider)) return;
+
+    try {
+      if (_xiaozhiService == null) {
+        await _initXiaozhiService();
+      }
+      if (_xiaozhiService != null && !_xiaozhiService!.isConnected) {
+        await _xiaozhiService!.connect();
+      }
+      if (_xiaozhiService == null || !_xiaozhiService!.isConnected) {
+        throw Exception('Xiaozhi chưa kết nối');
+      }
+
+      // Native speech chỉ làm ASR. Gửi transcript sạch cho Agent để phần LLM,
+      // MCP và TTS hiện có vẫn hoạt động như trước.
+      await _xiaozhiService!.sendTextMessage(text);
+    } catch (e) {
+      if (!mounted) return;
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.assistant,
+        content: 'Không gửi được câu vừa nhận dạng tới Agent: $e',
+      );
+    }
+  }
+
+  Future<bool> _handleRealtimeTool(
+    String text,
+    ConversationProvider conversationProvider,
+  ) async {
+    final result = await _realtimeTools.handle(
+      text,
+      forceMusic: _pendingOnlineMusicSearch,
+    );
+    if (result == null) return false;
+
+    _pendingOnlineMusicSearch =
+        result.kind == RealtimeToolKind.music && result.requiresFollowUp;
+    await _xiaozhiService?.interruptResponse();
+
+    await conversationProvider.addMessage(
+      conversationId: widget.conversation.id,
+      role: MessageRole.assistant,
+      content: result.text,
+    );
+    _scrollToBottom();
+    await _speakInterpreter(result.text, 'vi-VN');
+
+    if (result.externalUri != null) {
+      final opened = await _realtimeTools.openExternal(result.externalUri!);
+      if (!opened && mounted) {
+        _showCustomSnackbar('Không mở được ứng dụng/trình duyệt phát nhạc.');
+      }
+    }
+    return true;
   }
 
   Future<bool> _handleInterpreterVoiceCommand(
@@ -301,6 +376,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _liveInterpreterMode = false;
           _interpreterBusy = false;
           _interpreterWaitingForXiaozhi = false;
+          _interpreterTurn.resetToA();
         });
       }
       await conversationProvider.addMessage(
@@ -328,6 +404,14 @@ class _ChatScreenState extends State<ChatScreen> {
       _interpreterLocaleA = pair.$2;
       _interpreterLanguageB = pair.$3;
       _interpreterLocaleB = pair.$4;
+      _interpreterTurn.updatePair(
+        newLanguageA: _interpreterLanguageA,
+        newLocaleA: _interpreterLocaleA,
+        newLanguageB: _interpreterLanguageB,
+        newLocaleB: _interpreterLocaleB,
+      );
+    } else {
+      _interpreterTurn.resetToA();
     }
 
     await _xiaozhiService?.interruptResponse();
@@ -341,7 +425,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     final confirmation =
         'Đã bật phiên dịch trực tiếp $_interpreterLanguageA ↔ $_interpreterLanguageB. '
-        'Mỗi người cứ nói bình thường, mình sẽ tự nhận chiều và nói lại ngôn ngữ còn lại.';
+        'Lượt đầu mình nghe $_interpreterLanguageA, dịch và nói $_interpreterLanguageB. '
+        'Sau đó tự chuyển sang lượt $_interpreterLanguageB. Nếu cần, bấm Đổi lượt.';
     await conversationProvider.addMessage(
       conversationId: widget.conversation.id,
       role: MessageRole.assistant,
@@ -400,9 +485,12 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    final sourceLanguage = _interpreterTurn.sourceLanguage;
+    final targetLanguage = _interpreterTurn.targetLanguage;
+    final targetLocale = _interpreterTurn.targetLocale;
+
     _interpreterBusy = true;
-    _interpreterWaitingForXiaozhi =
-        provider.minimaxConfigs.isEmpty && provider.difyConfigs.isEmpty;
+    _interpreterWaitingForXiaozhi = false;
     if (mounted) setState(() {});
     try {
       await _xiaozhiService?.interruptResponse();
@@ -412,12 +500,10 @@ class _ChatScreenState extends State<ChatScreen> {
         content: text,
       );
 
-      final result = await translation.translateConversationTurn(
+      final result = await translation.translate(
         text: text,
-        languageA: _interpreterLanguageA,
-        localeA: _interpreterLocaleA,
-        languageB: _interpreterLanguageB,
-        localeB: _interpreterLocaleB,
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
         naturalSpeech: true,
         existingXiaozhi: _xiaozhiService,
       );
@@ -429,17 +515,19 @@ class _ChatScreenState extends State<ChatScreen> {
         content: result.text,
       );
 
-      // Nếu backend là Xiaozhi thì audio TTS đã đi về qua chính WebSocket.
-      if (result.backend != 'Xiaozhi') {
-        await _speakInterpreter(result.text, result.targetLocale);
-      }
+      // v3.3 luôn phát bản dịch bằng TTS của điện thoại với locale đích.
+      // Xiaozhi backend được gọi ở silent mode trong TranslationService.
+      await _speakInterpreter(result.text, targetLocale);
+      _interpreterTurn.nextTurn();
+      if (mounted) setState(() {});
       _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
       await conversationProvider.addMessage(
         conversationId: widget.conversation.id,
         role: MessageRole.assistant,
-        content: 'Không thể phiên dịch câu vừa rồi. Hãy nói lại chậm và rõ hơn.',
+        content:
+            'Không thể phiên dịch lượt $sourceLanguage → $targetLanguage. Hãy nói lại chậm và rõ hơn.',
       );
       _showCustomSnackbar('Phiên dịch thất bại: $e');
     } finally {
@@ -453,12 +541,23 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.trim().isEmpty) return;
     try {
       await _interpreterTts.stop();
+      await _interpreterTts.awaitSpeakCompletion(true);
+      final available = await _interpreterTts.isLanguageAvailable(locale);
+      if (available == false || available == 0) {
+        if (mounted) {
+          _showCustomSnackbar(
+            'Máy chưa cài giọng TTS $locale. Hãy cài giọng ngôn ngữ này trong cài đặt hệ thống.',
+          );
+        }
+        return;
+      }
       await _interpreterTts.setLanguage(locale);
       await _interpreterTts.setSpeechRate(0.48);
       await _interpreterTts.setPitch(1.0);
       await _interpreterTts.speak(text);
     } catch (e) {
-      print('Không thể phát TTS phiên dịch: $e');
+      print('Không thể phát TTS $locale: $e');
+      if (mounted) _showCustomSnackbar('Không phát được giọng $locale.');
     }
   }
 
@@ -501,7 +600,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (selected == null) return;
     if (selected.$1.isEmpty) {
-      setState(() => _liveInterpreterMode = false);
+      setState(() {
+        _liveInterpreterMode = false;
+        _interpreterTurn.resetToA();
+      });
       await _xiaozhiService?.interruptResponse();
       return;
     }
@@ -510,6 +612,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _interpreterLocaleA = selected.$2;
       _interpreterLanguageB = selected.$3;
       _interpreterLocaleB = selected.$4;
+      _interpreterTurn.updatePair(
+        newLanguageA: _interpreterLanguageA,
+        newLocaleA: _interpreterLocaleA,
+        newLanguageB: _interpreterLanguageB,
+        newLocaleB: _interpreterLocaleB,
+      );
       _liveInterpreterMode = true;
     });
     await _xiaozhiService?.interruptResponse();
@@ -952,22 +1060,36 @@ class _ChatScreenState extends State<ChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Phiên dịch trực tiếp: $_interpreterLanguageA ↔ $_interpreterLanguageB',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  'Đang nghe: ${_interpreterTurn.sourceLanguage} → nói ${_interpreterTurn.targetLanguage}',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 Text(
                   _interpreterBusy
-                      ? 'Đang dịch câu vừa nghe...'
-                      : 'Cứ nói bình thường. App tự xác định chiều và phát ngôn ngữ còn lại.',
+                      ? 'Đang dịch và phát bằng ${_interpreterTurn.targetLocale}…'
+                      : 'ASR khóa ${_interpreterTurn.sourceLocale}. Dịch xong sẽ tự chuyển lượt.',
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ],
             ),
           ),
+          TextButton(
+            onPressed: _interpreterBusy || _isRecording
+                ? null
+                : () {
+                    setState(() {
+                      _interpreterTurn.swapTurn();
+                    });
+                  },
+            child: const Text('Đổi lượt'),
+          ),
           IconButton(
             tooltip: 'Tắt phiên dịch',
             onPressed: () async {
-              setState(() => _liveInterpreterMode = false);
+              setState(() {
+                _liveInterpreterMode = false;
+                _interpreterTurn.resetToA();
+              });
+              await _nativeSpeech.cancel();
               await _xiaozhiService?.interruptResponse();
             },
             icon: const Icon(Icons.close_rounded),
@@ -1352,82 +1474,116 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // 开始录音
+  // Bắt đầu nhận giọng nói. v3.3 ưu tiên native speech có khóa locale.
   void _startRecording() async {
     if (widget.conversation.type != ConversationType.xiaozhi ||
         _xiaozhiService == null) {
       _showCustomSnackbar('Tính năng giọng nói chỉ hỗ trợ cuộc trò chuyện Xiaozhi');
-      setState(() {
-        _isVoiceInputMode = false;
-      });
+      setState(() => _isVoiceInputMode = false);
       return;
     }
 
     try {
-      // 震动反馈
       HapticFeedback.mediumImpact();
+      await _interpreterTts.stop();
+      await _xiaozhiService?.stopPlayback();
 
-      // 开始录音
-      await _xiaozhiService!.startListening();
+      final requestedLocale =
+          _liveInterpreterMode ? _interpreterTurn.sourceLocale : 'vi-VN';
+      final nativeReady = await _nativeSpeech.initialize();
+      if (nativeReady) {
+        _nativePartialTranscript = '';
+        _usingNativeSpeech = await _nativeSpeech.start(
+          localeId: requestedLocale,
+          onResult: (words, isFinal) {
+            if (!mounted || words.trim().isEmpty) return;
+            _nativePartialTranscript = words.trim();
+            // Chỉ cập nhật state để banner/nút phản ánh đang nghe; không gửi
+            // partial transcript lên Agent.
+            if (isFinal) setState(() {});
+          },
+        );
+      }
+
+      // Trong phiên dịch không được fallback sang ASR cloud tự đoán ngôn ngữ,
+      // vì đó chính là nguyên nhân câu tiếng Trung bị hiểu thành tiếng Việt.
+      if (!_usingNativeSpeech && _liveInterpreterMode) {
+        throw Exception(
+          'Máy chưa mở được ASR $requestedLocale. Hãy cài/ngắt tải ngôn ngữ nhận dạng tương ứng trong Android rồi thử lại.',
+        );
+      }
+
+      // Chat tiếng Việt bình thường vẫn có thể fallback sang Xiaozhi ASR.
+      if (!_usingNativeSpeech) {
+        await _xiaozhiService!.startListening();
+        if (mounted && nativeReady) {
+          _showCustomSnackbar(
+            'ASR hệ thống không mở được $requestedLocale, đang dùng ASR Xiaozhi dự phòng.',
+          );
+        }
+      }
     } catch (e) {
       print('Không thể bắt đầu ghi âm: $e');
-      _showCustomSnackbar('Không thể bắt đầu ghi âm: ${e.toString()}');
-      setState(() {
-        _isRecording = false;
-        _isVoiceInputMode = false;
-      });
+      _showCustomSnackbar('Không thể bắt đầu ghi âm: $e');
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _isVoiceInputMode = false;
+          _usingNativeSpeech = false;
+        });
+      }
     }
   }
 
-  // 停止录音并发送
+  // Dừng nhận dạng rồi xử lý transcript. Native ASR trả câu về app trước,
+  // vì vậy tool online và phiên dịch có thể chạy mà không phụ thuộc ASR cloud.
   void _stopRecording() async {
     try {
-      setState(() {
-        _isLoading = true;
-        _isRecording = false;
-        // 不要立即关闭Giọng nói输入Chế độ，让用户可以看到识别结果
-        // _isVoiceInputMode = false;
-      });
-
-      // 震动反馈
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _isRecording = false;
+        });
+      }
       HapticFeedback.mediumImpact();
 
-      // 停止录音
-      await _xiaozhiService?.stopListening();
-
+      if (_usingNativeSpeech) {
+        final text = (await _nativeSpeech.stopAndGetText()).trim();
+        _usingNativeSpeech = false;
+        _nativePartialTranscript = '';
+        if (text.isEmpty) {
+          _showCustomSnackbar('Không nghe rõ câu nói. Hãy thử lại gần micro hơn.');
+        } else {
+          await _processVoiceTranscript(text);
+        }
+      } else {
+        // Fallback: server sẽ phát event STT và _handleXiaozhiMessage xử lý.
+        await _xiaozhiService?.stopListening();
+      }
       _scrollToBottom();
     } catch (e) {
-      print('停止录音Thất bại: $e');
-      _showCustomSnackbar('Gửi giọng nói thất bại: ${e.toString()}');
-
-      // 出错时关闭Giọng nói输入Chế độ
-      setState(() {
-        _isVoiceInputMode = false;
-      });
+      print('Dừng ghi âm thất bại: $e');
+      _showCustomSnackbar('Gửi giọng nói thất bại: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Hủy录音
+  // Hủy ghi âm
   void _cancelRecording() async {
     try {
-      setState(() {
-        _isRecording = false;
-      });
-
-      // 震动反馈
+      if (mounted) setState(() => _isRecording = false);
       HapticFeedback.heavyImpact();
-
-      // Hủy录音
-      await _xiaozhiService?.abortListening();
-
-      // 使用自定义的拟物化提示，显示在顶部且带有圆角
+      if (_usingNativeSpeech) {
+        await _nativeSpeech.cancel();
+        _usingNativeSpeech = false;
+        _nativePartialTranscript = '';
+      } else {
+        await _xiaozhiService?.abortListening();
+      }
       _showCustomSnackbar('Đã hủy gửi');
     } catch (e) {
-      print('Hủy录音Thất bại: $e');
+      print('Hủy ghi âm thất bại: $e');
     }
   }
 
@@ -1527,6 +1683,12 @@ class _ChatScreenState extends State<ChatScreen> {
       role: MessageRole.user,
       content: message,
     );
+
+    if (widget.conversation.type == ConversationType.xiaozhi &&
+        await _handleRealtimeTool(message, conversationProvider)) {
+      _scrollToBottom();
+      return;
+    }
 
     if (!mounted) return;
 
@@ -1678,6 +1840,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _startWaveAnimation() {
     _waveAnimationTimer?.cancel();
     _interpreterTts.stop();
+    _nativeSpeech.cancel();
     _waveAnimationTimer = Timer.periodic(const Duration(milliseconds: 100), (
       timer,
     ) {
@@ -1695,6 +1858,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _stopWaveAnimation() {
     _waveAnimationTimer?.cancel();
     _interpreterTts.stop();
+    _nativeSpeech.cancel();
     _waveAnimationTimer = null;
   }
 

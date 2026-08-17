@@ -56,6 +56,8 @@ class XiaozhiService {
   WebSocketChannel? _ws;
   bool _hasStartedCall = false;
   MessageListener? _messageListener;
+  bool _suppressIncomingAudio = false;
+  Completer<void>? _suppressedTtsStopCompleter;
 
   /// Tạo một service riêng cho mỗi cấu hình/cuộc trò chuyện.
   /// Tránh giữ singleton cũ làm app tiếp tục dùng token hoặc Agent trước đó.
@@ -204,6 +206,32 @@ class XiaozhiService {
       _isConnected = false;
     } catch (e) {
       print('$TAG: 断开连接Thất bại: $e');
+    }
+  }
+
+  /// Gửi một yêu cầu text nhưng không phát audio TTS mà server trả về.
+  /// Dùng khi Xiaozhi chỉ đóng vai trò backend dịch; app sẽ tự phát bản dịch
+  /// bằng FlutterTts với locale đích chính xác.
+  Future<String> sendTextMessageSilently(String message) async {
+    final previous = _suppressIncomingAudio;
+    _suppressIncomingAudio = true;
+    _suppressedTtsStopCompleter = Completer<void>();
+    try {
+      await AudioUtil.stopPlaying();
+      final result = await sendTextMessage(message);
+      try {
+        await _suppressedTtsStopCompleter!.future.timeout(
+          const Duration(seconds: 5),
+        );
+      } catch (_) {
+        // Một số server không phát event stop. Timeout chỉ để đảm bảo không
+        // giữ trạng thái suppress vô hạn.
+      }
+      await AudioUtil.stopPlaying();
+      return result;
+    } finally {
+      _suppressedTtsStopCompleter = null;
+      _suppressIncomingAudio = previous;
     }
   }
 
@@ -539,7 +567,9 @@ class XiaozhiService {
       case XiaozhiEventType.binaryMessage:
         // 处理二进制音频数据 - 简化直接播放
         final audioData = event.data as List<int>;
-        AudioUtil.playOpusData(Uint8List.fromList(audioData));
+        if (!_suppressIncomingAudio) {
+          AudioUtil.playOpusData(Uint8List.fromList(audioData));
+        }
         break;
 
       case XiaozhiEventType.error:
@@ -556,7 +586,9 @@ class XiaozhiService {
       if (message is String) {
         _handleTextMessage(message);
       } else if (message is List<int>) {
-        AudioUtil.playOpusData(Uint8List.fromList(message));
+        if (!_suppressIncomingAudio) {
+          AudioUtil.playOpusData(Uint8List.fromList(message));
+        }
       }
     } catch (e) {
       print('$TAG: 处理Tin nhắnThất bại: $e');
@@ -603,6 +635,12 @@ class XiaozhiService {
           // TTSTin nhắn处理
           final String state = jsonData['state'] ?? '';
           final String text = jsonData['text'] ?? '';
+
+          if (state == 'stop' &&
+              _suppressedTtsStopCompleter != null &&
+              !_suppressedTtsStopCompleter!.isCompleted) {
+            _suppressedTtsStopCompleter!.complete();
+          }
 
           if (state == 'sentence_start' && text.isNotEmpty) {
             print('$TAG: 收到TTS句子: $text');

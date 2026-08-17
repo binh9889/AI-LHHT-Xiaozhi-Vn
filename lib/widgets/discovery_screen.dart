@@ -91,10 +91,10 @@ class DiscoveryScreen extends StatelessWidget {
               ),
               _FeatureCard(
                 title: 'Tool / MCP',
-                subtitle: 'Mở rộng xổ số, thời tiết, khách sạn và API',
+                subtitle: 'Xổ số miền Bắc + tìm nhạc online ngay trong Chat',
                 icon: Icons.extension_rounded,
                 gradient: const [Color(0xFF475569), Color(0xFF111827)],
-                onTap: () => _showTip(context, 'Tool realtime nên triển khai qua MCP/API thay vì tài liệu tĩnh.'),
+                onTap: () => _showTip(context, 'Trong Chat hãy nói “kết quả xổ số hôm nay” hoặc “bật nhạc”. App sẽ xử lý tool online trước Agent.'),
               ),
             ]),
           ),
@@ -120,7 +120,12 @@ class DiscoveryScreen extends StatelessWidget {
               _SimpleTile(
                 icon: Icons.confirmation_number_outlined,
                 title: 'Xổ số realtime',
-                subtitle: 'Thiết kế theo Tool realtime; không dùng knowledge base tĩnh cho kết quả hôm nay.',
+                subtitle: 'Đã tích hợp nguồn XSMB online vào Chat và kiểm tra ngày dữ liệu trước khi trả lời.',
+              ),
+              _SimpleTile(
+                icon: Icons.music_note_rounded,
+                title: 'Nhạc trực tuyến',
+                subtitle: 'Lệnh “bật nhạc” tìm catalog online và mở nguồn phát YouTube Music thay vì kho cục bộ 5 bài.',
               ),
               _SimpleTile(
                 icon: Icons.security_rounded,

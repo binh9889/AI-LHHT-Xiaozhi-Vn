@@ -1,11 +1,13 @@
 import 'dart:async';
+
+import 'package:ai_assistant/providers/config_provider.dart';
+import 'package:ai_assistant/services/native_speech_service.dart';
+import 'package:ai_assistant/services/translation_service.dart';
+import 'package:ai_assistant/services/xiaozhi_service.dart';
+import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:provider/provider.dart';
-import 'package:ai_assistant/providers/config_provider.dart';
-import 'package:ai_assistant/services/translation_service.dart';
-import 'package:ai_assistant/services/xiaozhi_service.dart';
-import 'package:ai_assistant/utils/vietnamese_transcript_normalizer.dart';
 
 class InterpreterScreen extends StatefulWidget {
   const InterpreterScreen({super.key});
@@ -32,35 +34,48 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
   final TextEditingController _inputController = TextEditingController();
   final TextEditingController _outputController = TextEditingController();
   final FlutterTts _tts = FlutterTts();
+  final NativeSpeechService _speech = NativeSpeechService.instance;
 
   String _sourceLanguage = 'Tiếng Việt';
   String _targetLanguage = 'English';
   bool _naturalSpeech = true;
   bool _conversationMode = true;
   bool _autoSpeak = true;
-  bool _waitingForTranslationResponse = false;
   bool _translating = false;
   bool _listening = false;
   bool _voiceReady = false;
   String _backend = 'Chưa dịch';
-  String _voiceStatus = 'Chưa kết nối giọng nói';
+  String _voiceStatus = 'Đang chuẩn bị nhận giọng nói...';
   XiaozhiService? _xiaozhiService;
+  late InterpreterTurnController _turn;
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(_prepareVoiceAsr);
+    _turn = InterpreterTurnController(
+      languageA: _sourceLanguage,
+      localeA: _languages[_sourceLanguage]!,
+      languageB: _targetLanguage,
+      localeB: _languages[_targetLanguage]!,
+    );
+    Future.microtask(_prepareServices);
   }
 
-  Future<void> _prepareVoiceAsr() async {
-    final provider = Provider.of<ConfigProvider>(context, listen: false);
-    if (provider.xiaozhiConfigs.isEmpty) {
-      if (mounted) {
-        setState(() => _voiceStatus = 'Cấu hình Xiaozhi để dùng nhận giọng nói');
-      }
-      return;
+  Future<void> _prepareServices() async {
+    final ready = await _speech.initialize();
+    if (mounted) {
+      setState(() {
+        _voiceReady = ready;
+        _voiceStatus = ready
+            ? 'ASR theo ngôn ngữ đã sẵn sàng'
+            : 'Máy không có dịch vụ nhận dạng giọng nói khả dụng';
+      });
     }
 
+    // Giữ một kết nối Xiaozhi làm backend dịch dự phòng. ASR phiên dịch không
+    // dùng kết nối này nữa; nó dùng native speech với locale khóa theo lượt.
+    final provider = Provider.of<ConfigProvider>(context, listen: false);
+    if (provider.xiaozhiConfigs.isEmpty) return;
     final config = provider.xiaozhiConfigs.first;
     final service = XiaozhiService(
       websocketUrl: config.websocketUrl,
@@ -68,141 +83,114 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
       clientId: config.clientId,
       token: config.token,
     );
-    service.addListener(_handleXiaozhiEvent);
     _xiaozhiService = service;
-
     try {
       await service.connect();
-      if (mounted) {
-        setState(() {
-          _voiceReady = service.isConnected;
-          _voiceStatus = service.isConnected
-              ? 'ASR Xiaozhi đã sẵn sàng'
-              : 'Chưa kết nối được ASR Xiaozhi';
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _voiceStatus = 'Lỗi kết nối giọng nói');
-    }
+    } catch (_) {}
   }
 
-  void _handleXiaozhiEvent(XiaozhiServiceEvent event) {
-    if (!mounted) return;
-    switch (event.type) {
-      case XiaozhiServiceEventType.connected:
-        setState(() {
-          _voiceReady = true;
-          _voiceStatus = 'ASR Xiaozhi đã sẵn sàng';
-        });
-        break;
-      case XiaozhiServiceEventType.disconnected:
-        setState(() {
-          _voiceReady = false;
-          _voiceStatus = 'Mất kết nối ASR';
-        });
-        break;
-      case XiaozhiServiceEventType.userMessage:
-        final rawText = (event.data ?? '').toString().trim();
-        final normalized = VietnameseTranscriptNormalizer.normalize(rawText);
-        final text = normalized.normalized;
-        if (text.isNotEmpty) {
-          _inputController.text = text;
-          _inputController.selection = TextSelection.collapsed(
-            offset: _inputController.text.length,
-          );
-          setState(() => _voiceStatus = 'Đã nhận: $text');
-          unawaited(_handleVoiceTranscript(text));
-        }
-        break;
-      case XiaozhiServiceEventType.textMessage:
-        // Khi đang chờ chính Xiaozhi tạo bản dịch, giữ audio/TTS của bản dịch.
-        // Ngoài thời điểm đó, chặn câu trả lời Agent để Xiaozhi chỉ làm ASR.
-        if (!_waitingForTranslationResponse) {
-          unawaited(_xiaozhiService?.interruptResponse());
-        }
-        break;
-      case XiaozhiServiceEventType.error:
-        setState(() => _voiceStatus = 'Lỗi ASR: ${event.data}');
-        break;
-      case XiaozhiServiceEventType.audioData:
-      case XiaozhiServiceEventType.voiceCallStart:
-      case XiaozhiServiceEventType.voiceCallEnd:
-        break;
+  void _syncTurnPair({bool reset = true}) {
+    var source = _sourceLanguage;
+    if (_conversationMode && source == 'Tự động nhận diện') {
+      source = 'Tiếng Việt';
+      _sourceLanguage = source;
     }
+    final aLocale = _languages[source] ?? 'vi-VN';
+    final bLocale = _languages[_targetLanguage] ?? 'en-US';
+    _turn.updatePair(
+      newLanguageA: source,
+      newLocaleA: aLocale,
+      newLanguageB: _targetLanguage,
+      newLocaleB: bLocale,
+    );
+    if (!reset) _turn.swapTurn();
   }
 
   Future<void> _startListening() async {
-    if (_xiaozhiService == null || !_voiceReady) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ASR Xiaozhi chưa sẵn sàng.')),
-      );
+    if (!_voiceReady || _translating) {
+      _snack('Nhận dạng giọng nói chưa sẵn sàng.');
       return;
     }
-    try {
-      setState(() {
-        _listening = true;
-        _voiceStatus = 'Đang nghe... thả nút khi nói xong';
-      });
-      await _xiaozhiService!.startListening(mode: 'manual');
-    } catch (e) {
-      if (mounted) {
+
+    final locale = _conversationMode
+        ? _turn.sourceLocale
+        : (_languages[_sourceLanguage] ?? 'auto');
+    final label = _conversationMode ? _turn.sourceLanguage : _sourceLanguage;
+    final started = await _speech.start(
+      localeId: locale,
+      onResult: (words, isFinal) {
+        if (!mounted || words.trim().isEmpty) return;
         setState(() {
-          _listening = false;
-          _voiceStatus = 'Không thể bắt đầu thu âm';
+          _inputController.text = words;
+          _inputController.selection = TextSelection.collapsed(
+            offset: words.length,
+          );
+          _voiceStatus = isFinal ? 'Đã nhận $label' : 'Đang nghe $label…';
         });
-      }
-    }
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _listening = started;
+      _voiceStatus = started
+          ? 'Đang nghe $label… thả nút khi nói xong'
+          : 'Không mở được ASR $label: ${_speech.lastError}';
+    });
   }
 
   Future<void> _stopListening() async {
     if (!_listening) return;
-    await _xiaozhiService?.stopListening();
+    setState(() {
+      _listening = false;
+      _voiceStatus = 'Đang chốt câu nói…';
+    });
+    final text = (await _speech.stopAndGetText()).trim();
+    if (!mounted) return;
+    if (text.isEmpty) {
+      setState(() => _voiceStatus = 'Không nghe rõ. Hãy thử nói lại gần micro hơn.');
+      return;
+    }
+    _inputController.text = text;
+    _inputController.selection = TextSelection.collapsed(offset: text.length);
+    await _translateCurrentInput(fromVoice: true);
+  }
+
+  Future<void> _cancelListening() async {
+    await _speech.cancel();
     if (mounted) {
       setState(() {
         _listening = false;
-        _voiceStatus = 'Đang nhận dạng giọng nói...';
+        _voiceStatus = 'Đã hủy lượt nói';
       });
     }
   }
 
-  Future<void> _handleVoiceTranscript(String text) async {
-    if (_translating) return;
+  Future<void> _translateCurrentInput({bool fromVoice = false}) async {
+    if (_translating || _inputController.text.trim().isEmpty) return;
     final provider = Provider.of<ConfigProvider>(context, listen: false);
     final service = TranslationService(provider);
     if (!service.isAvailable) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Chưa có dịch vụ phiên dịch. Hãy cấu hình Xiaozhi, MiniMax hoặc Dify.'),
-          ),
-        );
-      }
+      _snack('Hãy cấu hình Xiaozhi, MiniMax hoặc Dify để làm backend dịch.');
       return;
     }
 
-    await _xiaozhiService?.interruptResponse();
+    final text = _inputController.text.trim();
+    final sourceLanguage = _conversationMode ? _turn.sourceLanguage : _sourceLanguage;
+    final targetLanguage = _conversationMode ? _turn.targetLanguage : _targetLanguage;
+    final targetLocale = _conversationMode
+        ? _turn.targetLocale
+        : (_languages[_targetLanguage] ?? 'en-US');
 
-    if (!_conversationMode) {
-      await _translate();
-      return;
-    }
-
-    final localeA = _languages[_sourceLanguage] ?? 'vi-VN';
-    final localeB = _languages[_targetLanguage] ?? 'en-US';
-    final expectsXiaozhiBackend =
-        provider.minimaxConfigs.isEmpty && provider.difyConfigs.isEmpty;
     setState(() {
       _translating = true;
-      _waitingForTranslationResponse = expectsXiaozhiBackend;
-      _voiceStatus = 'Đang phiên dịch hai chiều...';
+      _voiceStatus = '$sourceLanguage → $targetLanguage: đang dịch…';
     });
     try {
-      final result = await service.translateConversationTurn(
+      final result = await service.translate(
         text: text,
-        languageA: _sourceLanguage,
-        localeA: localeA,
-        languageB: _targetLanguage,
-        localeB: localeB,
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
         naturalSpeech: _naturalSpeech,
         existingXiaozhi: _xiaozhiService,
       );
@@ -210,81 +198,47 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
       _outputController.text = result.text;
       setState(() {
         _backend = result.backend;
-        _voiceStatus = '${result.sourceLanguage} → ${result.targetLanguage}';
+        _voiceStatus = '$sourceLanguage → $targetLanguage';
       });
-      // Xiaozhi đã tự phát TTS khi chính nó là backend. Với MiniMax/Dify,
-      // dùng TTS trên điện thoại theo ngôn ngữ đích.
-      if (_autoSpeak && result.backend != 'Xiaozhi') {
-        await _speakText(result.text, result.targetLocale);
+
+      // Luôn phát TTS trên máy bằng locale ĐÍCH. Không phụ thuộc server Xiaozhi
+      // có chọn đúng giọng/ngôn ngữ hay không.
+      if (_autoSpeak) {
+        await _speakText(result.text, targetLocale);
+      }
+
+      if (_conversationMode) {
+        _turn.nextTurn();
+        if (mounted) setState(() {});
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _voiceStatus = 'Phiên dịch thất bại');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Phiên dịch thất bại: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _translating = false;
-          _waitingForTranslationResponse = false;
-        });
-      } else {
-        _waitingForTranslationResponse = false;
-      }
-    }
-  }
-
-  Future<void> _translate() async {
-    if (_translating || _inputController.text.trim().isEmpty) return;
-    final configProvider = Provider.of<ConfigProvider>(context, listen: false);
-    final service = TranslationService(configProvider);
-    if (!service.isAvailable) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Hãy cấu hình MiniMax, Dify hoặc Xiaozhi trước.'),
-        ),
-      );
-      return;
-    }
-
-    setState(() => _translating = true);
-    try {
-      final result = await service.translate(
-        text: _inputController.text,
-        sourceLanguage: _sourceLanguage,
-        targetLanguage: _targetLanguage,
-        naturalSpeech: _naturalSpeech,
-      );
-      if (!mounted) return;
-      _outputController.text = result.text;
-      setState(() => _backend = result.backend);
-      if (_autoSpeak && result.backend != 'Xiaozhi') {
-        await _speakTranslation();
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Phiên dịch thất bại: $e')),
-      );
+      _snack('Phiên dịch thất bại: $e');
     } finally {
       if (mounted) setState(() => _translating = false);
     }
   }
 
-  Future<void> _speakTranslation() async {
-    final text = _outputController.text.trim();
-    if (text.isEmpty) return;
-    final locale = _languages[_targetLanguage] ?? 'en-US';
-    await _speakText(text, locale);
-  }
-
   Future<void> _speakText(String text, String locale) async {
     if (text.trim().isEmpty) return;
-    if (locale != 'auto') await _tts.setLanguage(locale);
-    await _tts.setSpeechRate(0.48);
-    await _tts.setPitch(1.0);
-    await _tts.speak(text);
+    try {
+      await _tts.stop();
+      await _tts.awaitSpeakCompletion(true);
+      if (locale != 'auto') {
+        final available = await _tts.isLanguageAvailable(locale);
+        if (available == false || available == 0) {
+          _snack('Máy chưa có giọng TTS $locale. Hãy cài giọng nói ngôn ngữ này trong cài đặt Android.');
+          return;
+        }
+        await _tts.setLanguage(locale);
+      }
+      await _tts.setSpeechRate(0.48);
+      await _tts.setPitch(1.0);
+      await _tts.speak(text);
+    } catch (e) {
+      _snack('Không phát được giọng $locale: $e');
+    }
   }
 
   void _swapLanguages() {
@@ -296,15 +250,29 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
       final oldText = _inputController.text;
       _inputController.text = _outputController.text;
       _outputController.text = oldText;
+      _syncTurnPair();
     });
+  }
+
+  void _swapConversationTurn() {
+    setState(() {
+      _turn.swapTurn();
+      _voiceStatus = 'Đã đổi lượt. Đang chờ ${_turn.sourceLanguage}.';
+    });
+  }
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   @override
   void dispose() {
+    _speech.cancel();
     _inputController.dispose();
     _outputController.dispose();
     _tts.stop();
-    _xiaozhiService?.removeListener(_handleXiaozhiEvent);
     _xiaozhiService?.disconnect();
     super.dispose();
   }
@@ -314,10 +282,10 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Phiên dịch AI'),
+        title: const Text('Phiên dịch trực tiếp'),
         actions: [
           IconButton(
-            tooltip: 'Đổi ngôn ngữ',
+            tooltip: 'Đổi hai ngôn ngữ',
             onPressed: _swapLanguages,
             icon: const Icon(Icons.swap_horiz_rounded),
           ),
@@ -336,13 +304,23 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
                     source: _sourceLanguage,
                     target: _targetLanguage,
                     languages: _languages.keys.toList(),
-                    onSourceChanged: (value) =>
-                        setState(() => _sourceLanguage = value),
-                    onTargetChanged: (value) =>
-                        setState(() => _targetLanguage = value),
+                    onSourceChanged: (value) {
+                      setState(() {
+                        _sourceLanguage = value;
+                        _syncTurnPair();
+                      });
+                    },
+                    onTargetChanged: (value) {
+                      setState(() {
+                        _targetLanguage = value;
+                        _syncTurnPair();
+                      });
+                    },
                     onSwap: _swapLanguages,
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
+                  if (_conversationMode) _buildTurnCard(theme),
+                  if (_conversationMode) const SizedBox(height: 12),
                   if (horizontal)
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,21 +343,23 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
                         children: [
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Phiên dịch hai chiều trực tiếp'),
+                            title: const Text('Phiên dịch hai chiều theo lượt'),
                             subtitle: const Text(
-                              'Tự nhận biết người đang nói ngôn ngữ nào và dịch sang ngôn ngữ còn lại.',
+                              'Khóa ASR theo đúng ngôn ngữ từng người: A → B rồi B → A. Không tự đoán ngôn ngữ từ transcript.',
                             ),
                             value: _conversationMode,
-                            onChanged: (value) =>
-                                setState(() => _conversationMode = value),
+                            onChanged: (value) {
+                              setState(() {
+                                _conversationMode = value;
+                                _syncTurnPair();
+                              });
+                            },
                           ),
                           const Divider(height: 1),
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Tự động phát bản dịch'),
-                            subtitle: const Text(
-                              'Người đối diện nghe ngay sau khi câu nói được dịch.',
-                            ),
+                            title: const Text('Tự động nói bản dịch'),
+                            subtitle: const Text('Bản dịch được phát bằng TTS đúng locale đích.'),
                             value: _autoSpeak,
                             onChanged: (value) => setState(() => _autoSpeak = value),
                           ),
@@ -387,23 +367,16 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
                             title: const Text('Dịch hội thoại tự nhiên'),
-                            subtitle: const Text(
-                              'Ưu tiên câu nói tự nhiên thay vì dịch từng chữ.',
-                            ),
+                            subtitle: const Text('Giữ đúng ý nhưng diễn đạt tự nhiên cho giao tiếp trực tiếp.'),
                             value: _naturalSpeech,
-                            onChanged: (value) =>
-                                setState(() => _naturalSpeech = value),
+                            onChanged: (value) => setState(() => _naturalSpeech = value),
                           ),
                           const Divider(height: 1),
                           ListTile(
                             contentPadding: EdgeInsets.zero,
-                            leading: Icon(
-                              _voiceReady
-                                  ? Icons.graphic_eq_rounded
-                                  : Icons.mic_off_outlined,
-                            ),
+                            leading: Icon(_voiceReady ? Icons.graphic_eq_rounded : Icons.mic_off_outlined),
                             title: Text(_voiceStatus),
-                            subtitle: Text('AI dịch: $_backend'),
+                            subtitle: Text('Backend dịch: $_backend'),
                           ),
                         ],
                       ),
@@ -418,6 +391,36 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     );
   }
 
+  Widget _buildTurnCard(ThemeData theme) {
+    return Card(
+      color: theme.colorScheme.primaryContainer.withOpacity(0.55),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            const Icon(Icons.record_voice_over_rounded),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Lượt hiện tại: ${_turn.sourceLanguage}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 3),
+                  Text('Nghe ${_turn.sourceLocale} → dịch và nói ${_turn.targetLanguage} (${_turn.targetLocale})'),
+                ],
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _listening ? null : _swapConversationTurn,
+              icon: const Icon(Icons.swap_calls_rounded),
+              label: const Text('Đổi lượt'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputCard(ThemeData theme) {
     return Card(
       child: Padding(
@@ -427,29 +430,33 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
           children: [
             Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Nội dung gốc',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                    _conversationMode ? 'Người đang nói: ${_turn.sourceLanguage}' : 'Nội dung gốc',
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
                   ),
                 ),
-                TextButton.icon(
+                TextButton(
                   onPressed: () {
                     _inputController.clear();
                     _outputController.clear();
+                    setState(() {});
                   },
-                  icon: const Icon(Icons.clear_rounded, size: 18),
-                  label: const Text('Xóa'),
+                  child: const Text('Xóa'),
                 ),
               ],
             ),
+            const SizedBox(height: 8),
             TextField(
               controller: _inputController,
-              minLines: 6,
-              maxLines: 12,
-              decoration: const InputDecoration(
-                hintText: 'Nhập nội dung hoặc giữ nút mic để nói...',
-                alignLabelWithHint: true,
+              minLines: 5,
+              maxLines: 8,
+              decoration: InputDecoration(
+                hintText: _conversationMode
+                    ? 'Giữ mic và nói bằng ${_turn.sourceLanguage}…'
+                    : 'Nhập nội dung hoặc giữ nút mic để nói…',
+                filled: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
               ),
             ),
             const SizedBox(height: 12),
@@ -457,52 +464,35 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
               children: [
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: _translating ? null : _translate,
+                    onPressed: _translating ? null : () => _translateCurrentInput(),
                     icon: _translating
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.translate_rounded),
-                    label: Text(_translating ? 'Đang dịch...' : 'Dịch ngay'),
+                    label: const Text('Dịch ngay'),
                   ),
                 ),
                 const SizedBox(width: 10),
-                Listener(
-                  onPointerDown: (_) => _startListening(),
-                  onPointerUp: (_) => _stopListening(),
-                  onPointerCancel: (_) => _stopListening(),
+                GestureDetector(
+                  onLongPressStart: (_) => unawaited(_startListening()),
+                  onLongPressEnd: (_) => unawaited(_stopListening()),
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 54,
-                    height: 54,
+                    duration: const Duration(milliseconds: 150),
+                    width: 62,
+                    height: 62,
                     decoration: BoxDecoration(
+                      color: _listening ? Colors.red : theme.colorScheme.primary,
                       shape: BoxShape.circle,
-                      color: _listening
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.primary,
-                      boxShadow: _listening
-                          ? [
-                              BoxShadow(
-                                color: theme.colorScheme.error.withOpacity(.28),
-                                blurRadius: 18,
-                                spreadRadius: 4,
-                              ),
-                            ]
-                          : null,
                     ),
-                    child: const Icon(Icons.mic_rounded, color: Colors.white),
+                    child: Icon(_listening ? Icons.graphic_eq_rounded : Icons.mic_rounded, color: Colors.white, size: 29),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              _conversationMode
-                  ? 'Giữ mic để nói • App tự nhận Việt/Anh và dịch sang chiều còn lại'
-                  : 'Giữ mic để nói • Thả để nhận dạng và dịch',
+              _listening ? 'Đang nghe đúng ${_conversationMode ? _turn.sourceLanguage : _sourceLanguage}' : 'Giữ mic để nói • Thả để nhận dạng và dịch',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -519,34 +509,35 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
           children: [
             Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
-                    'Bản dịch',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                    _conversationMode ? 'Nói cho: ${_turn.targetLanguage}' : 'Bản dịch',
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Đọc bản dịch',
-                  onPressed: _speakTranslation,
+                  tooltip: 'Phát lại bản dịch',
+                  onPressed: _outputController.text.trim().isEmpty
+                      ? null
+                      : () => _speakText(
+                            _outputController.text,
+                            _conversationMode ? _turn.targetLocale : (_languages[_targetLanguage] ?? 'en-US'),
+                          ),
                   icon: const Icon(Icons.volume_up_rounded),
                 ),
               ],
             ),
+            const SizedBox(height: 8),
             TextField(
               controller: _outputController,
               readOnly: true,
-              minLines: 6,
-              maxLines: 12,
-              decoration: const InputDecoration(
+              minLines: 5,
+              maxLines: 8,
+              decoration: InputDecoration(
                 hintText: 'Bản dịch sẽ xuất hiện ở đây',
-                alignLabelWithHint: true,
+                filled: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
               ),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _speakTranslation,
-              icon: const Icon(Icons.record_voice_over_rounded),
-              label: const Text('Phát giọng bản dịch'),
             ),
           ],
         ),
@@ -556,13 +547,6 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
 }
 
 class _LanguageBar extends StatelessWidget {
-  final String source;
-  final String target;
-  final List<String> languages;
-  final ValueChanged<String> onSourceChanged;
-  final ValueChanged<String> onTargetChanged;
-  final VoidCallback onSwap;
-
   const _LanguageBar({
     required this.source,
     required this.target,
@@ -571,6 +555,13 @@ class _LanguageBar extends StatelessWidget {
     required this.onTargetChanged,
     required this.onSwap,
   });
+
+  final String source;
+  final String target;
+  final List<String> languages;
+  final ValueChanged<String> onSourceChanged;
+  final ValueChanged<String> onTargetChanged;
+  final VoidCallback onSwap;
 
   @override
   Widget build(BuildContext context) {
@@ -584,16 +575,14 @@ class _LanguageBar extends StatelessWidget {
                 child: DropdownButton<String>(
                   isExpanded: true,
                   value: source,
-                  items: languages
-                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                      .toList(),
+                  items: languages.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
                   onChanged: (value) {
                     if (value != null) onSourceChanged(value);
                   },
                 ),
               ),
             ),
-            IconButton(onPressed: onSwap, icon: const Icon(Icons.swap_horiz)),
+            IconButton(onPressed: onSwap, icon: const Icon(Icons.swap_horiz_rounded)),
             Expanded(
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(

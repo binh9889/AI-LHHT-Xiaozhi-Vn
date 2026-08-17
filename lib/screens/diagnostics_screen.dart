@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ai_assistant/providers/config_provider.dart';
 import 'package:ai_assistant/services/xiaozhi_service.dart';
+import 'package:ai_assistant/services/native_speech_service.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
   const DiagnosticsScreen({super.key});
@@ -15,6 +16,29 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   bool _testing = false;
   String _xiaozhiStatus = 'Chưa kiểm tra';
   String _latency = '--';
+  String _nativeAsrStatus = 'Chưa kiểm tra';
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_testNativeAsr);
+  }
+
+  Future<void> _testNativeAsr() async {
+    final speech = NativeSpeechService.instance;
+    final ready = await speech.initialize();
+    if (!ready) {
+      if (mounted) setState(() => _nativeAsrStatus = 'Không khả dụng: ${speech.lastError}');
+      return;
+    }
+    final vi = await speech.supportsLocale('vi-VN');
+    final zh = await speech.supportsLocale('zh-CN');
+    if (mounted) {
+      setState(() {
+        _nativeAsrStatus = 'Tiếng Việt: ${vi ? "PASS" : "thiếu"} • 中文: ${zh ? "PASS" : "thiếu"}';
+      });
+    }
+  }
 
   Future<void> _testXiaozhi() async {
     final provider = Provider.of<ConfigProvider>(context, listen: false);
@@ -73,7 +97,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               items: [
                 _PipelineItem('MIC', 'Thu âm từ thiết bị', Icons.mic_rounded, true),
                 _PipelineItem('VAD', 'Điều khiển bởi phiên Xiaozhi', Icons.multiline_chart_rounded, provider.xiaozhiConfigs.isNotEmpty),
-                _PipelineItem('ASR', 'Nhận dạng qua Xiaozhi', Icons.record_voice_over_rounded, provider.xiaozhiConfigs.isNotEmpty),
+                _PipelineItem('ASR', 'Native locale-locked + Xiaozhi fallback', Icons.record_voice_over_rounded, true),
                 _PipelineItem('AGENT', 'Xiaozhi / Dify / MiniMax', Icons.smart_toy_outlined, provider.xiaozhiConfigs.isNotEmpty || provider.difyConfigs.isNotEmpty || provider.minimaxConfigs.isNotEmpty),
                 _PipelineItem('TTS', 'Xiaozhi + TTS thiết bị', Icons.volume_up_rounded, true),
               ],
@@ -84,6 +108,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 10),
+            _StatusTile(
+              icon: Icons.record_voice_over_rounded,
+              title: 'ASR ngôn ngữ',
+              subtitle: _nativeAsrStatus,
+              trailing: TextButton(onPressed: _testNativeAsr, child: const Text('Kiểm tra')),
+            ),
             _StatusTile(
               icon: Icons.hub_outlined,
               title: 'Xiaozhi',
@@ -127,7 +157,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Mẹo chẩn đoán: nếu câu nói bị nhận sai, kiểm tra ASR trước. Nếu transcript đúng nhưng câu trả lời sai, kiểm tra Agent/Tool. Nếu có timeout, kiểm tra WebSocket hoặc dịch vụ AI tương ứng.',
+                  'Mẹo v3.3: với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Xổ số và nhạc online được xử lý bởi tool trong APK trước khi gửi Agent.',
                   style: TextStyle(height: 1.45),
                 ),
               ),
