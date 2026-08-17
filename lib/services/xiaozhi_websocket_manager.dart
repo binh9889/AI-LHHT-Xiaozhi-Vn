@@ -69,7 +69,7 @@ class XiaozhiWebSocketManager {
   Future<void> connect(String url, String token) async {
     if (url.isEmpty) {
       _dispatchEvent(
-        XiaozhiEvent(type: XiaozhiEventType.error, data: "Địa chỉ WebSocket不能为空"),
+        XiaozhiEvent(type: XiaozhiEventType.error, data: 'Địa chỉ WebSocket đang trống.'),
       );
       return;
     }
@@ -163,7 +163,7 @@ class XiaozhiWebSocketManager {
     } catch (e) {
       print('$TAG: 连接Thất bại: $e');
       _dispatchEvent(
-        XiaozhiEvent(type: XiaozhiEventType.error, data: "创建WebSocketThất bại: $e"),
+        XiaozhiEvent(type: XiaozhiEventType.error, data: 'Không thể tạo kết nối WebSocket: $e'),
       );
     }
   }

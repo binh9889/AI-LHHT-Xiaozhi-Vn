@@ -36,6 +36,9 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
   String _sourceLanguage = 'Tiếng Việt';
   String _targetLanguage = 'English';
   bool _naturalSpeech = true;
+  bool _conversationMode = true;
+  bool _autoSpeak = true;
+  bool _waitingForTranslationResponse = false;
   bool _translating = false;
   bool _listening = false;
   bool _voiceReady = false;
@@ -108,12 +111,15 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
             offset: _inputController.text.length,
           );
           setState(() => _voiceStatus = 'Đã nhận: $text');
-          _translate();
+          unawaited(_handleVoiceTranscript(text));
         }
         break;
       case XiaozhiServiceEventType.textMessage:
-        // Màn phiên dịch chỉ lấy STT; không dùng câu trả lời của Agent Xiaozhi.
-        _xiaozhiService?.stopPlayback();
+        // Khi đang chờ chính Xiaozhi tạo bản dịch, giữ audio/TTS của bản dịch.
+        // Ngoài thời điểm đó, chặn câu trả lời Agent để Xiaozhi chỉ làm ASR.
+        if (!_waitingForTranslationResponse) {
+          unawaited(_xiaozhiService?.interruptResponse());
+        }
         break;
       case XiaozhiServiceEventType.error:
         setState(() => _voiceStatus = 'Lỗi ASR: ${event.data}');
@@ -159,6 +165,76 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     }
   }
 
+  Future<void> _handleVoiceTranscript(String text) async {
+    if (_translating) return;
+    final provider = Provider.of<ConfigProvider>(context, listen: false);
+    final service = TranslationService(provider);
+    if (!service.isAvailable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Chưa có dịch vụ phiên dịch. Hãy cấu hình Xiaozhi, MiniMax hoặc Dify.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    await _xiaozhiService?.interruptResponse();
+
+    if (!_conversationMode) {
+      await _translate();
+      return;
+    }
+
+    final localeA = _languages[_sourceLanguage] ?? 'vi-VN';
+    final localeB = _languages[_targetLanguage] ?? 'en-US';
+    final expectsXiaozhiBackend =
+        provider.minimaxConfigs.isEmpty && provider.difyConfigs.isEmpty;
+    setState(() {
+      _translating = true;
+      _waitingForTranslationResponse = expectsXiaozhiBackend;
+      _voiceStatus = 'Đang phiên dịch hai chiều...';
+    });
+    try {
+      final result = await service.translateConversationTurn(
+        text: text,
+        languageA: _sourceLanguage,
+        localeA: localeA,
+        languageB: _targetLanguage,
+        localeB: localeB,
+        naturalSpeech: _naturalSpeech,
+        existingXiaozhi: _xiaozhiService,
+      );
+      if (!mounted) return;
+      _outputController.text = result.text;
+      setState(() {
+        _backend = result.backend;
+        _voiceStatus = '${result.sourceLanguage} → ${result.targetLanguage}';
+      });
+      // Xiaozhi đã tự phát TTS khi chính nó là backend. Với MiniMax/Dify,
+      // dùng TTS trên điện thoại theo ngôn ngữ đích.
+      if (_autoSpeak && result.backend != 'Xiaozhi') {
+        await _speakText(result.text, result.targetLocale);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _voiceStatus = 'Phiên dịch thất bại');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Phiên dịch thất bại: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _translating = false;
+          _waitingForTranslationResponse = false;
+        });
+      } else {
+        _waitingForTranslationResponse = false;
+      }
+    }
+  }
+
   Future<void> _translate() async {
     if (_translating || _inputController.text.trim().isEmpty) return;
     final configProvider = Provider.of<ConfigProvider>(context, listen: false);
@@ -183,6 +259,9 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
       if (!mounted) return;
       _outputController.text = result.text;
       setState(() => _backend = result.backend);
+      if (_autoSpeak && result.backend != 'Xiaozhi') {
+        await _speakTranslation();
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -197,6 +276,11 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     final text = _outputController.text.trim();
     if (text.isEmpty) return;
     final locale = _languages[_targetLanguage] ?? 'en-US';
+    await _speakText(text, locale);
+  }
+
+  Future<void> _speakText(String text, String locale) async {
+    if (text.trim().isEmpty) return;
     if (locale != 'auto') await _tts.setLanguage(locale);
     await _tts.setSpeechRate(0.48);
     await _tts.setPitch(1.0);
@@ -279,6 +363,27 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
                       padding: const EdgeInsets.all(14),
                       child: Column(
                         children: [
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Phiên dịch hai chiều trực tiếp'),
+                            subtitle: const Text(
+                              'Tự nhận biết người đang nói ngôn ngữ nào và dịch sang ngôn ngữ còn lại.',
+                            ),
+                            value: _conversationMode,
+                            onChanged: (value) =>
+                                setState(() => _conversationMode = value),
+                          ),
+                          const Divider(height: 1),
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Tự động phát bản dịch'),
+                            subtitle: const Text(
+                              'Người đối diện nghe ngay sau khi câu nói được dịch.',
+                            ),
+                            value: _autoSpeak,
+                            onChanged: (value) => setState(() => _autoSpeak = value),
+                          ),
+                          const Divider(height: 1),
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
                             title: const Text('Dịch hội thoại tự nhiên'),
@@ -392,8 +497,10 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Giữ mic để nói • Thả để nhận dạng và dịch',
+            Text(
+              _conversationMode
+                  ? 'Giữ mic để nói • App tự nhận Việt/Anh và dịch sang chiều còn lại'
+                  : 'Giữ mic để nói • Thả để nhận dạng và dịch',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),

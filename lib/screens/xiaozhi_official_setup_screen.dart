@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/config_provider.dart';
 import '../services/xiaozhi_provisioning_service.dart';
@@ -37,7 +38,7 @@ class _XiaozhiOfficialSetupScreenState
 
   Future<void> _saveConnection() async {
     final result = _result;
-    if (result == null || !result.canConnect) return;
+    if (result == null || !result.canConnectProduction) return;
 
     await Provider.of<ConfigProvider>(context, listen: false)
         .addXiaozhiConfigWithToken(
@@ -96,7 +97,7 @@ class _XiaozhiOfficialSetupScreenState
             _InfoCard(
               title: 'Danh tính thiết bị',
               child: SelectableText(
-                'Device-ID: ${result.deviceId}\nClient-ID: ${result.clientId}\nHTTP: ${result.httpStatus}\nURL: ${result.finalUrl}',
+                'Device-ID: ${result.deviceId}\nClient-ID: ${result.clientId}\nHTTP: ${result.httpStatus}\nURL: ${result.finalUrl}\nRequest: ${result.requestProfile}',
               ),
             ),
             if (result.hasActivationCode) ...[
@@ -107,13 +108,32 @@ class _XiaozhiOfficialSetupScreenState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SelectableText(
-                      result.activationCode!,
-                      style: const TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 8,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SelectableText(
+                            result.activationCode!,
+                            style: const TextStyle(
+                              fontSize: 34,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 8,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Sao chép mã',
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: result.activationCode!),
+                            );
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Đã sao chép mã 6 số.')),
+                            );
+                          },
+                          icon: const Icon(Icons.copy_rounded),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     const Text(
@@ -136,7 +156,7 @@ class _XiaozhiOfficialSetupScreenState
                 color: Colors.orange,
                 child: Text(
                   'Máy chủ chỉ trả trạng thái hoạt động, chưa trả activation/websocket. '
-                  'Bản v2.2.0 đang dùng POST + JSON system info và Activation-Version=1 '
+                  'Bản v3.1 dùng POST theo cấu trúc application + board và Activation-Version=1 '
                   'theo nhánh firmware chính thức không có Serial-Number/HMAC eFuse.',
                 ),
               ),
@@ -159,31 +179,43 @@ class _XiaozhiOfficialSetupScreenState
                 title: 'Máy chủ đang trả tài khoản thử nghiệm',
                 color: Colors.orange,
                 child: Text(
-                  'Máy chủ trả test-token/GID_test và không cấp mã activation. '
-                  'Điều này có nghĩa điện thoại có thể thử giao thức, nhưng '
-                  'chưa được máy chủ xiaozhi.me công nhận là thiết bị có thể '
-                  'gắn vào Agent Robot. Đây là giới hạn phía máy chủ, không phải '
-                  'lỗi microphone hay WebSocket của điện thoại.',
+                  'Phản hồi hiện tại chứa test-token/GID_test nên đây chỉ là cấu hình '
+                  'chẩn đoán, không phải thông tin liên kết Agent thật. App sẽ không '
+                  'lưu credential thử nghiệm thành cấu hình production. Mã 6 số chỉ '
+                  'xuất hiện khi OTA trả trường activation.code.',
                 ),
               ),
             ],
-            if (result.canConnect) ...[
+            if (result.canConnectProduction) ...[
               const SizedBox(height: 12),
               _InfoCard(
-                title: 'Thông tin WebSocket nhận được',
+                title: 'Thông tin WebSocket production',
                 child: SelectableText(
-                  '${result.websocketUrl}\nToken: '
-                  '${result.token == 'test-token' ? 'test-token' : 'đã được cấp'}',
+                  '${result.websocketUrl}\nToken: đã được cấp',
                 ),
               ),
               const SizedBox(height: 12),
-              FilledButton(
+              FilledButton.icon(
                 onPressed: _saveConnection,
-                child: Text(
-                  result.isTestCredential
-                      ? 'Lưu chế độ thử nghiệm'
-                      : 'Lưu và sử dụng Agent',
+                icon: const Icon(Icons.check_circle_outline_rounded),
+                label: const Text('Lưu và sử dụng Agent'),
+              ),
+            ] else if (result.canConnectDiagnostic) ...[
+              const SizedBox(height: 12),
+              _InfoCard(
+                title: 'WebSocket chẩn đoán',
+                color: Colors.orange,
+                child: SelectableText(
+                  '${result.websocketUrl}\nToken: credential thử nghiệm – không lưu production',
                 ),
+              ),
+            ],
+            if (result.hasActivationCode) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _loading ? null : _runProvisioning,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Đã nhập mã trên xiaozhi.me – kiểm tra lại'),
               ),
             ],
             const SizedBox(height: 12),

@@ -91,7 +91,7 @@ class SettingsScreen extends StatelessWidget {
               child: ListTile(
                 leading: Icon(Icons.verified_outlined),
                 title: Text('AI-LHHT v3.0 Voice Pro', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('3.0.0+300 • Vietnamese Edition'),
+                subtitle: Text('3.1.0+310 • Voice Pro Live Interpreter'),
               ),
             ),
           ],

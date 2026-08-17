@@ -764,6 +764,25 @@ class XiaozhiService {
     }
   }
 
+
+  /// Ngắt câu trả lời/TTS hiện tại mà không tự khởi động lại microphone.
+  /// Dùng cho chế độ phiên dịch: Xiaozhi chỉ làm ASR, sau đó app tự tạo bản dịch.
+  Future<void> interruptResponse() async {
+    try {
+      if (_webSocketManager != null && _isConnected && _sessionId != null) {
+        final abortMessage = {
+          'session_id': _sessionId,
+          'type': 'abort',
+          'reason': 'interpreter_takeover',
+        };
+        _webSocketManager?.sendMessage(jsonEncode(abortMessage));
+      }
+      await stopPlayback();
+    } catch (e) {
+      print('$TAG: Không thể ngắt phản hồi hiện tại: $e');
+    }
+  }
+
   /// 发送中断Tin nhắn
   Future<void> sendAbortMessage() async {
     try {

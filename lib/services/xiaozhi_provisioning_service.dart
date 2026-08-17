@@ -8,6 +8,7 @@ class XiaozhiProvisioningResult {
   final String deviceId;
   final String clientId;
   final String otaUrl;
+  final String requestProfile;
   final String? websocketUrl;
   final String? token;
   final String? activationCode;
@@ -24,6 +25,7 @@ class XiaozhiProvisioningResult {
     required this.deviceId,
     required this.clientId,
     required this.otaUrl,
+    required this.requestProfile,
     required this.websocketUrl,
     required this.token,
     required this.activationCode,
@@ -43,26 +45,31 @@ class XiaozhiProvisioningResult {
   bool get hasActivationChallenge =>
       activationChallenge != null && activationChallenge!.trim().isNotEmpty;
 
-  bool get canConnect =>
-      websocketUrl != null &&
-      websocketUrl!.trim().isNotEmpty &&
-      token != null &&
-      token!.trim().isNotEmpty;
+  bool get hasWebSocket =>
+      websocketUrl != null && websocketUrl!.trim().isNotEmpty;
+
+  bool get hasUsableToken =>
+      token != null && token!.trim().isNotEmpty && token != 'test-token';
+
+  /// Chỉ coi là cấu hình production khi server cấp WebSocket + token thật.
+  bool get canConnectProduction => hasWebSocket && hasUsableToken;
+
+  /// Dùng cho chẩn đoán giao thức. Không nên lưu thành cấu hình Agent chính.
+  bool get canConnectDiagnostic =>
+      hasWebSocket && token != null && token!.trim().isNotEmpty;
 }
 
-/// Xiaozhi official OTA/provisioning client for a phone-class device.
+/// OTA/provisioning client cho Android theo hình dạng request mà server
+/// Xiaozhi mã nguồn mở công bố: POST JSON với hai khối `application` và
+/// `board`, kèm Device-Id/Client-Id.
 ///
-/// Important protocol choice:
-/// - Official ESP32 firmware sends Activation-Version=2 ONLY when it owns a
-///   factory serial number backed by the ESP32 HMAC/eFuse key.
-/// - A normal Android phone does not have that Xiaozhi factory HMAC identity.
-/// - Therefore this client deliberately uses Activation-Version=1 and DOES NOT
-///   invent a Serial-Number or HMAC key. This is the closest legitimate match
-///   to the official firmware's non-serial-number activation path.
+/// Android không có serial/HMAC eFuse của thiết bị ESP32 nên không giả mạo
+/// Serial-Number hoặc HMAC. Activation-Version=1 được dùng cho nhánh không có
+/// danh tính phần cứng nhà máy.
 class XiaozhiProvisioningService {
   static const String officialOtaUrl =
       'https://api.tenclass.net/xiaozhi/ota/';
-  static const String appVersion = '2.2.0';
+  static const String appVersion = '3.1.0';
 
   static Future<XiaozhiProvisioningResult> provision({
     String otaUrl = officialOtaUrl,
@@ -75,54 +82,38 @@ class XiaozhiProvisioningService {
     final uri = Uri.parse(otaUrl);
     final headers = <String, String>{
       'Accept': 'application/json',
-      'Accept-Language': 'vi-VN',
-      'User-Agent': 'xiaozhi-android-client/$appVersion ($model; $os)',
+      'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
+      'User-Agent': 'AI-LHHT-Android/$appVersion ($model; $os)',
       'Activation-Version': '1',
       'Device-Id': deviceId,
       'Client-Id': clientId,
       'Content-Type': 'application/json',
     };
 
-    // Mirrors the structure of Board::GetSystemInfoJson() where it makes sense
-    // on Android. ESP-only values are represented conservatively rather than
-    // fabricated as real flash/heap/eFuse values.
+    // Hình dạng request tối thiểu bám tài liệu OTA server mã nguồn mở.
+    // elf_sha256='1' là giá trị probe tương thích được tài liệu server dùng
+    // trong ví dụ curl để kiểm tra luồng OTA; app không tuyên bố đây là hash
+    // firmware ESP32 thật.
     final payload = <String, dynamic>{
-      'version': 2,
-      'language': 'vi-VN',
-      'flash_size': 0,
-      'minimum_free_heap_size': '0',
-      'mac_address': deviceId,
-      'uuid': clientId,
-      'chip_model_name': 'android',
-      'chip_info': <String, dynamic>{
-        'model': 0,
-        'cores': 0,
-        'revision': 0,
-        'features': 0,
-      },
       'application': <String, dynamic>{
-        'name': 'ai_assistant',
+        'name': 'AI-LHHT-Android',
         'version': appVersion,
-        'compile_time': DateTime.now().toUtc().toIso8601String(),
-        'idf_version': 'android',
-        'elf_sha256': '',
-      },
-      'partition_table': <dynamic>[],
-      'ota': <String, dynamic>{'label': 'android'},
-      'display': <String, dynamic>{
-        'monochrome': false,
-        'width': 0,
-        'height': 0,
+        'elf_sha256': '1',
       },
       'board': <String, dynamic>{
         'type': 'android',
-        'device_model': model,
+        'name': model,
+        'mac': deviceId,
+        'uuid': clientId,
         'os_version': os,
       },
     };
 
-    // Keep logs useful without exposing access tokens.
+    const requestProfile = 'official-minimal-application-board-v1';
+
+    // Log không chứa token/secret.
     print('XiaozhiProvisioning: POST $uri');
+    print('XiaozhiProvisioning: profile=$requestProfile');
     print('XiaozhiProvisioning: Device-Id=$deviceId Client-Id=$clientId');
     print('XiaozhiProvisioning: Activation-Version=1');
     print('XiaozhiProvisioning: body=${jsonEncode(payload)}');
@@ -174,9 +165,15 @@ class XiaozhiProvisioningService {
     final activationTimeoutMs = _readInt(activation, ['timeout_ms']);
 
     final mqttClientId = _readString(mqtt, ['client_id']) ?? '';
-    final isTest = token == 'test-token' || mqttClientId.contains('GID_test');
+    final mqttUsername = _readString(mqtt, ['username']) ?? '';
+    final isTest = token == 'test-token' ||
+        mqttClientId.contains('GID_test') ||
+        mqttUsername.toLowerCase().contains('test');
     final isHealth = decoded['status']?.toString() == 'ok' &&
-        decoded['message']?.toString().toLowerCase().contains('server is working') ==
+        decoded['message']
+                ?.toString()
+                .toLowerCase()
+                .contains('server is working') ==
             true &&
         websocket.isEmpty &&
         activation.isEmpty;
@@ -185,6 +182,7 @@ class XiaozhiProvisioningService {
       deviceId: deviceId,
       clientId: clientId,
       otaUrl: otaUrl,
+      requestProfile: requestProfile,
       websocketUrl: wsUrl,
       token: token,
       activationCode: activationCode,

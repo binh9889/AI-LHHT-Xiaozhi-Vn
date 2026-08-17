@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:ai_assistant/utils/vietnamese_transcript_normalizer.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
@@ -15,6 +16,7 @@ import 'package:ai_assistant/providers/config_provider.dart';
 import 'package:ai_assistant/models/minimax_config.dart';
 import 'package:ai_assistant/services/dify_service.dart';
 import 'package:ai_assistant/services/xiaozhi_service.dart';
+import 'package:ai_assistant/services/translation_service.dart';
 import 'package:ai_assistant/services/minimax_service.dart';
 import 'package:ai_assistant/widgets/message_bubble.dart';
 import 'package:ai_assistant/screens/voice_call_screen.dart';
@@ -40,6 +42,16 @@ class _ChatScreenState extends State<ChatScreen> {
   MiniMaxService? _minimaxService; // 保持MiniMaxService实例
   Timer? _connectionCheckTimer; // Thêm定时器检查连接状态
   Timer? _autoReconnectTimer; // 自动重连定时器
+
+  // Phiên dịch trực tiếp ngay trong cuộc trò chuyện Xiaozhi.
+  final FlutterTts _interpreterTts = FlutterTts();
+  bool _liveInterpreterMode = false;
+  bool _interpreterBusy = false;
+  bool _interpreterWaitingForXiaozhi = false;
+  String _interpreterLanguageA = 'Tiếng Việt';
+  String _interpreterLocaleA = 'vi-VN';
+  String _interpreterLanguageB = 'English';
+  String _interpreterLocaleB = 'en-US';
 
   // Giọng nói输入相关
   bool _isVoiceInputMode = false;
@@ -164,6 +176,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connectionCheckTimer?.cancel();
     _autoReconnectTimer?.cancel();
     _waveAnimationTimer?.cancel();
+    _interpreterTts.stop();
 
     // 在销毁前确保停止所有音频播放
     if (_xiaozhiService != null) {
@@ -210,53 +223,296 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (event.type == XiaozhiServiceEventType.textMessage) {
-      // 直接使用Văn bản内容
-      String content = event.data as String;
-      print('收到Tin nhắn内容: $content');
+      final content = (event.data ?? '').toString().trim();
+      if (content.isEmpty) return;
 
-      // 忽略空Tin nhắn
-      if (content.isNotEmpty) {
-        conversationProvider.addMessage(
+      // Trong chế độ phiên dịch, câu trả lời Agent bình thường phải bị chặn.
+      // Nếu chính Xiaozhi đang làm backend dịch, sendTextMessage() vẫn nhận
+      // textMessage này để hoàn tất Future nhưng UI không thêm trùng bubble.
+      if (_liveInterpreterMode) {
+        if (!_interpreterWaitingForXiaozhi) {
+          unawaited(_xiaozhiService?.interruptResponse());
+        }
+        return;
+      }
+
+      conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.assistant,
+        content: content,
+      );
+    } else if (event.type == XiaozhiServiceEventType.userMessage) {
+      final rawContent = (event.data ?? '').toString();
+      final normalization = VietnameseTranscriptNormalizer.normalize(rawContent);
+      final content = normalization.normalized.trim();
+      if (content.isEmpty || !_isVoiceInputMode) return;
+
+      Future.microtask(() async {
+        if (await _handleInterpreterVoiceCommand(content, conversationProvider)) {
+          return;
+        }
+
+        if (_liveInterpreterMode) {
+          await _handleLiveInterpreterTurn(content, conversationProvider);
+          return;
+        }
+
+        await conversationProvider.addMessage(
           conversationId: widget.conversation.id,
-          role: MessageRole.assistant,
+          role: MessageRole.user,
           content: content,
         );
-      }
-    } else if (event.type == XiaozhiServiceEventType.userMessage) {
-      // 处理用户的Giọng nói识别Văn bản
-      final rawContent = event.data as String;
-      final normalization = VietnameseTranscriptNormalizer.normalize(rawContent);
-      final content = normalization.normalized;
-      print('ASR raw: ${normalization.raw}');
-      if (normalization.changed) {
-        print('ASR normalized: ${normalization.normalized}');
-      }
 
-      if (content.isNotEmpty && _isVoiceInputMode) {
-        Future.microtask(() async {
-          await conversationProvider.addMessage(
-            conversationId: widget.conversation.id,
-            role: MessageRole.user,
-            content: content,
-          );
-
-          // Nếu chỉ sửa một lỗi ASR có độ tin cậy cao, ngắt phản hồi dựa trên
-          // transcript sai và gửi lại transcript đã chuẩn hóa dưới dạng text.
-          if (normalization.changed && _xiaozhiService != null) {
-            try {
-              await _xiaozhiService!.sendAbortMessage();
-              await _xiaozhiService!.sendTextMessage(content);
-            } catch (e) {
-              print('Không thể gửi transcript đã chuẩn hóa: $e');
-            }
+        // Nếu chỉ sửa một lỗi ASR có độ tin cậy cao, ngắt phản hồi dựa trên
+        // transcript sai và gửi lại transcript đã chuẩn hóa dưới dạng text.
+        if (normalization.changed && _xiaozhiService != null) {
+          try {
+            await _xiaozhiService!.sendAbortMessage();
+            await _xiaozhiService!.sendTextMessage(content);
+          } catch (e) {
+            print('Không thể gửi transcript đã chuẩn hóa: $e');
           }
-        });
-      }
+        }
+      });
     } else if (event.type == XiaozhiServiceEventType.connected ||
         event.type == XiaozhiServiceEventType.disconnected) {
-      // 当连接状态发生变化时，更新UI
       setState(() {});
+    } else if (event.type == XiaozhiServiceEventType.error) {
+      if (_liveInterpreterMode && mounted) {
+        _showCustomSnackbar('Lỗi phiên dịch/giọng nói: ${event.data}');
+      }
     }
+  }
+
+  Future<bool> _handleInterpreterVoiceCommand(
+    String text,
+    ConversationProvider conversationProvider,
+  ) async {
+    final normalized = text.toLowerCase().replaceAll(RegExp(r'[^a-zà-ỹ\s]'), ' ');
+    final wantsStop = normalized.contains('tắt phiên dịch') ||
+        normalized.contains('dừng phiên dịch') ||
+        normalized.contains('thoát phiên dịch') ||
+        normalized.contains('kết thúc phiên dịch');
+
+    if (wantsStop) {
+      await _xiaozhiService?.interruptResponse();
+      if (mounted) {
+        setState(() {
+          _liveInterpreterMode = false;
+          _interpreterBusy = false;
+          _interpreterWaitingForXiaozhi = false;
+        });
+      }
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.user,
+        content: text,
+      );
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.assistant,
+        content: 'Đã tắt phiên dịch trực tiếp.',
+      );
+      await _speakInterpreter('Đã tắt phiên dịch trực tiếp.', 'vi-VN');
+      return true;
+    }
+
+    final asksInterpreter = normalized.contains('phiên dịch') ||
+        normalized.contains('dịch trực tiếp') ||
+        normalized.contains('chế độ dịch');
+    if (!asksInterpreter) return false;
+
+    final pair = _parseInterpreterPair(normalized);
+    if (pair != null) {
+      _interpreterLanguageA = pair.$1;
+      _interpreterLocaleA = pair.$2;
+      _interpreterLanguageB = pair.$3;
+      _interpreterLocaleB = pair.$4;
+    }
+
+    await _xiaozhiService?.interruptResponse();
+    if (mounted) {
+      setState(() => _liveInterpreterMode = true);
+    }
+    await conversationProvider.addMessage(
+      conversationId: widget.conversation.id,
+      role: MessageRole.user,
+      content: text,
+    );
+    final confirmation =
+        'Đã bật phiên dịch trực tiếp $_interpreterLanguageA ↔ $_interpreterLanguageB. '
+        'Mỗi người cứ nói bình thường, mình sẽ tự nhận chiều và nói lại ngôn ngữ còn lại.';
+    await conversationProvider.addMessage(
+      conversationId: widget.conversation.id,
+      role: MessageRole.assistant,
+      content: confirmation,
+    );
+    await _speakInterpreter(confirmation, 'vi-VN');
+    return true;
+  }
+
+  (String, String, String, String)? _parseInterpreterPair(String text) {
+    const languages = <String, (String, String)>{
+      'việt': ('Tiếng Việt', 'vi-VN'),
+      'vietnam': ('Tiếng Việt', 'vi-VN'),
+      'anh': ('English', 'en-US'),
+      'english': ('English', 'en-US'),
+      'trung': ('中文', 'zh-CN'),
+      'chinese': ('中文', 'zh-CN'),
+      'nhật': ('日本語', 'ja-JP'),
+      'japanese': ('日本語', 'ja-JP'),
+      'hàn': ('한국어', 'ko-KR'),
+      'korean': ('한국어', 'ko-KR'),
+      'pháp': ('Français', 'fr-FR'),
+      'french': ('Français', 'fr-FR'),
+      'đức': ('Deutsch', 'de-DE'),
+      'german': ('Deutsch', 'de-DE'),
+      'tây ban nha': ('Español', 'es-ES'),
+      'spanish': ('Español', 'es-ES'),
+      'thái': ('ไทย', 'th-TH'),
+      'thai': ('ไทย', 'th-TH'),
+    };
+
+    final found = <(String, String)>[];
+    for (final entry in languages.entries) {
+      if (text.contains(entry.key) && !found.contains(entry.value)) {
+        found.add(entry.value);
+      }
+    }
+    if (found.length >= 2) {
+      return (found[0].$1, found[0].$2, found[1].$1, found[1].$2);
+    }
+    // Người dùng chỉ nói "mở phiên dịch" thì mặc định Việt ↔ Anh.
+    return ('Tiếng Việt', 'vi-VN', 'English', 'en-US');
+  }
+
+  Future<void> _handleLiveInterpreterTurn(
+    String text,
+    ConversationProvider conversationProvider,
+  ) async {
+    if (_interpreterBusy) return;
+    final provider = Provider.of<ConfigProvider>(context, listen: false);
+    final translation = TranslationService(provider);
+    if (!translation.isAvailable) {
+      _showCustomSnackbar(
+        'Chưa có backend dịch. Cần ít nhất Xiaozhi, MiniMax hoặc Dify.',
+      );
+      return;
+    }
+
+    _interpreterBusy = true;
+    _interpreterWaitingForXiaozhi =
+        provider.minimaxConfigs.isEmpty && provider.difyConfigs.isEmpty;
+    if (mounted) setState(() {});
+    try {
+      await _xiaozhiService?.interruptResponse();
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.user,
+        content: text,
+      );
+
+      final result = await translation.translateConversationTurn(
+        text: text,
+        languageA: _interpreterLanguageA,
+        localeA: _interpreterLocaleA,
+        languageB: _interpreterLanguageB,
+        localeB: _interpreterLocaleB,
+        naturalSpeech: true,
+        existingXiaozhi: _xiaozhiService,
+      );
+
+      if (!mounted) return;
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.assistant,
+        content: result.text,
+      );
+
+      // Nếu backend là Xiaozhi thì audio TTS đã đi về qua chính WebSocket.
+      if (result.backend != 'Xiaozhi') {
+        await _speakInterpreter(result.text, result.targetLocale);
+      }
+      _scrollToBottom();
+    } catch (e) {
+      if (!mounted) return;
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.assistant,
+        content: 'Không thể phiên dịch câu vừa rồi. Hãy nói lại chậm và rõ hơn.',
+      );
+      _showCustomSnackbar('Phiên dịch thất bại: $e');
+    } finally {
+      _interpreterBusy = false;
+      _interpreterWaitingForXiaozhi = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _speakInterpreter(String text, String locale) async {
+    if (text.trim().isEmpty) return;
+    try {
+      await _interpreterTts.stop();
+      await _interpreterTts.setLanguage(locale);
+      await _interpreterTts.setSpeechRate(0.48);
+      await _interpreterTts.setPitch(1.0);
+      await _interpreterTts.speak(text);
+    } catch (e) {
+      print('Không thể phát TTS phiên dịch: $e');
+    }
+  }
+
+  Future<void> _showInterpreterPicker() async {
+    if (widget.conversation.type != ConversationType.xiaozhi) return;
+    final pairs = <(String, String, String, String)>[
+      ('Tiếng Việt', 'vi-VN', 'English', 'en-US'),
+      ('Tiếng Việt', 'vi-VN', '中文', 'zh-CN'),
+      ('Tiếng Việt', 'vi-VN', '日本語', 'ja-JP'),
+      ('Tiếng Việt', 'vi-VN', '한국어', 'ko-KR'),
+      ('Tiếng Việt', 'vi-VN', 'Français', 'fr-FR'),
+    ];
+    final selected = await showModalBottomSheet<(String, String, String, String)>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              title: Text('Phiên dịch trực tiếp', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('Chọn cặp ngôn ngữ. Bạn cũng có thể nói “mở phiên dịch Anh Việt”.'),
+            ),
+            ...pairs.map(
+              (pair) => ListTile(
+                leading: const Icon(Icons.translate_rounded),
+                title: Text('${pair.$1} ↔ ${pair.$3}'),
+                onTap: () => Navigator.pop(context, pair),
+              ),
+            ),
+            if (_liveInterpreterMode)
+              ListTile(
+                leading: const Icon(Icons.stop_circle_outlined, color: Colors.red),
+                title: const Text('Tắt phiên dịch trực tiếp'),
+                onTap: () => Navigator.pop(context, ('', '', '', '')),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null) return;
+    if (selected.$1.isEmpty) {
+      setState(() => _liveInterpreterMode = false);
+      await _xiaozhiService?.interruptResponse();
+      return;
+    }
+    setState(() {
+      _interpreterLanguageA = selected.$1;
+      _interpreterLocaleA = selected.$2;
+      _interpreterLanguageB = selected.$3;
+      _interpreterLocaleB = selected.$4;
+      _liveInterpreterMode = true;
+    });
+    await _xiaozhiService?.interruptResponse();
   }
 
   // 初始化 DifyService
@@ -343,6 +599,17 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: const Icon(Icons.refresh, color: Colors.black, size: 24),
               tooltip: 'Bắt đầu cuộc trò chuyện mới',
               onPressed: _resetConversation,
+            ),
+          if (widget.conversation.type == ConversationType.xiaozhi)
+            IconButton(
+              tooltip: _liveInterpreterMode
+                  ? 'Phiên dịch đang bật'
+                  : 'Bật phiên dịch trực tiếp',
+              onPressed: _showInterpreterPicker,
+              icon: Icon(
+                Icons.translate_rounded,
+                color: _liveInterpreterMode ? Colors.deepPurple : Colors.black,
+              ),
             ),
           if (widget.conversation.type == ConversationType.xiaozhi)
             Container(
@@ -561,6 +828,7 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           if (widget.conversation.type == ConversationType.xiaozhi)
             _buildXiaozhiInfo(),
+          if (_liveInterpreterMode) _buildInterpreterBanner(),
           Expanded(child: _buildMessageList()),
           _buildInputArea(),
         ],
@@ -572,123 +840,138 @@ class _ChatScreenState extends State<ChatScreen> {
     final configProvider = Provider.of<ConfigProvider>(context);
     final xiaozhiConfig = configProvider.xiaozhiConfigs.firstWhere(
       (config) => config.id == widget.conversation.configId,
-      orElse:
-          () => XiaozhiConfig(
-            id: '',
-            name: 'Dịch vụ không xác định',
-            websocketUrl: '',
-            macAddress: '',
-            clientId: '',
-            token: '',
-          ),
+      orElse: () => XiaozhiConfig(
+        id: '',
+        name: 'Dịch vụ không xác định',
+        websocketUrl: '',
+        macAddress: '',
+        clientId: '',
+        token: '',
+      ),
     );
 
-    final bool isConnected = _xiaozhiService?.isConnected ?? false;
+    final isConnected = _xiaozhiService?.isConnected ?? false;
+    final statusColor = isConnected ? Colors.green : Colors.red;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.04),
             blurRadius: 6,
-            spreadRadius: 0,
             offset: const Offset(0, 2),
           ),
         ],
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: statusColor,
+                  boxShadow: [
+                    BoxShadow(
+                      color: statusColor.withOpacity(0.35),
+                      blurRadius: 4,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isConnected ? 'Đã kết nối' : 'Chưa kết nối',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: statusColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  xiaozhiConfig.websocketUrl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+          if (xiaozhiConfig.macAddress.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.devices_rounded, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Device: ${xiaozhiConfig.macAddress}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInterpreterBanner() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2EEFF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD7CCFF)),
+      ),
       child: Row(
         children: [
-          // 连接状态指示器
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isConnected ? Colors.green : Colors.red,
-              boxShadow: [
-                BoxShadow(
-                  color: (isConnected ? Colors.green : Colors.red).withOpacity(
-                    0.4,
-                  ),
-                  blurRadius: 4,
-                  spreadRadius: 1,
+          const Icon(Icons.translate_rounded, color: Color(0xFF6750A4)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Phiên dịch trực tiếp: $_interpreterLanguageA ↔ $_interpreterLanguageB',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  _interpreterBusy
+                      ? 'Đang dịch câu vừa nghe...'
+                      : 'Cứ nói bình thường. App tự xác định chiều và phát ngôn ngữ còn lại.',
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            isConnected ? 'Đã kết nối' : 'Chưa kết nối',
-            style: TextStyle(
-              fontSize: 13,
-              color: isConnected ? Colors.green : Colors.red,
-              fontWeight: FontWeight.w500,
-            ),
+          IconButton(
+            tooltip: 'Tắt phiên dịch',
+            onPressed: () async {
+              setState(() => _liveInterpreterMode = false);
+              await _xiaozhiService?.interruptResponse();
+            },
+            icon: const Icon(Icons.close_rounded),
           ),
-          const SizedBox(width: 12),
-
-          // 分隔线
-          Container(width: 1, height: 16, color: Colors.grey.withOpacity(0.3)),
-          const SizedBox(width: 12),
-
-          // WebSocket信息
-          Expanded(
-            child: Text(
-              '${xiaozhiConfig.websocketUrl}',
-              style: const TextStyle(
-                color: Colors.black54,
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-
-          if (xiaozhiConfig.macAddress.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 4,
-                      spreadRadius: 0,
-                      offset: const Offset(0, 1),
-                    ),
-                    BoxShadow(
-                      color: Colors.white.withOpacity(0.9),
-                      blurRadius: 3,
-                      spreadRadius: 0,
-                      offset: const Offset(0, -1),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.devices, size: 12, color: Colors.grey.shade500),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${xiaozhiConfig.macAddress}',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -1226,6 +1509,18 @@ class _ChatScreenState extends State<ChatScreen> {
       listen: false,
     );
 
+    if (widget.conversation.type == ConversationType.xiaozhi) {
+      if (await _handleInterpreterVoiceCommand(message, conversationProvider)) {
+        _scrollToBottom();
+        return;
+      }
+      if (_liveInterpreterMode) {
+        await _handleLiveInterpreterTurn(message, conversationProvider);
+        _scrollToBottom();
+        return;
+      }
+    }
+
     // Add user message
     await conversationProvider.addMessage(
       conversationId: widget.conversation.id,
@@ -1382,6 +1677,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // 启动波形动画
   void _startWaveAnimation() {
     _waveAnimationTimer?.cancel();
+    _interpreterTts.stop();
     _waveAnimationTimer = Timer.periodic(const Duration(milliseconds: 100), (
       timer,
     ) {
@@ -1398,6 +1694,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // 停止波形动画
   void _stopWaveAnimation() {
     _waveAnimationTimer?.cancel();
+    _interpreterTts.stop();
     _waveAnimationTimer = null;
   }
 
