@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ai_assistant/screens/interpreter_screen.dart';
 import 'package:ai_assistant/screens/diagnostics_screen.dart';
+import 'package:ai_assistant/screens/realtime_tools_screen.dart';
 
 class DiscoveryScreen extends StatelessWidget {
   const DiscoveryScreen({super.key});
@@ -91,10 +92,13 @@ class DiscoveryScreen extends StatelessWidget {
               ),
               _FeatureCard(
                 title: 'Tool / MCP',
-                subtitle: 'Xổ số miền Bắc + tìm nhạc online ngay trong Chat',
+                subtitle: '21 công cụ realtime: tài chính, thời tiết, crypto, tin tức, thể thao…',
                 icon: Icons.extension_rounded,
                 gradient: const [Color(0xFF475569), Color(0xFF111827)],
-                onTap: () => _showTip(context, 'Trong Chat hãy nói “kết quả xổ số hôm nay” hoặc “bật nhạc”. App sẽ xử lý tool online trước Agent.'),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const RealtimeToolsScreen()),
+                ),
               ),
             ]),
           ),
@@ -120,7 +124,7 @@ class DiscoveryScreen extends StatelessWidget {
               _SimpleTile(
                 icon: Icons.confirmation_number_outlined,
                 title: 'Xổ số realtime',
-                subtitle: 'Đã tích hợp nguồn XSMB online vào Chat và kiểm tra ngày dữ liệu trước khi trả lời.',
+                subtitle: 'Đã chuyển vào Realtime Tool Engine v4 với router, cache, retry và bridge dự phòng.',
               ),
               _SimpleTile(
                 icon: Icons.music_note_rounded,

@@ -9,6 +9,8 @@ import 'package:ai_assistant/providers/theme_provider.dart';
 import 'package:ai_assistant/screens/diagnostics_screen.dart';
 import 'package:ai_assistant/screens/interpreter_screen.dart';
 import 'package:ai_assistant/screens/xiaozhi_official_setup_screen.dart';
+import 'package:ai_assistant/screens/realtime_tools_screen.dart';
+import 'package:ai_assistant/screens/tool_provider_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -55,6 +57,27 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
+            _SectionTitle('Công cụ realtime'),
+            _NavCard(
+              icon: Icons.travel_explore_rounded,
+              title: 'Bộ 21 công cụ realtime',
+              subtitle: 'Xổ số, vàng, tỷ giá, crypto, thời tiết, AQI, tin tức, thể thao…',
+              badge: 'Tool Engine v4',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const RealtimeToolsScreen()),
+              ),
+            ),
+            _NavCard(
+              icon: Icons.hub_rounded,
+              title: 'Nguồn dữ liệu / Bridge',
+              subtitle: 'Cấu hình Realtime Bridge và API key thể thao',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ToolProviderSettingsScreen()),
+              ),
+            ),
+            const SizedBox(height: 18),
             _SectionTitle('Giọng nói & phiên dịch'),
             _NavCard(
               icon: Icons.translate_rounded,
@@ -90,8 +113,8 @@ class SettingsScreen extends StatelessWidget {
             const Card(
               child: ListTile(
                 leading: Icon(Icons.verified_outlined),
-                title: Text('AI-LHHT v3.3 Voice Pro', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('3.3.0+330 • Online Tools + Bilingual ASR'),
+                title: Text('AI-LHHT v4.0 Realtime Tools Pro', style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('4.0.0+400 • 21 Realtime Tools + Voice Router + Interpreter + Music'),
               ),
             ),
           ],

@@ -198,7 +198,7 @@ class _XiaozhiOfficialSetupScreenState
                 color: Colors.orange,
                 child: Text(
                   'Máy chủ chỉ trả trạng thái hoạt động, chưa trả activation/websocket. '
-                  'Bản v3.3 dùng POST theo cấu trúc application + board và Activation-Version=1 '
+                  'Bản v4 dùng POST theo cấu trúc application + board và Activation-Version=1 '
                   'theo nhánh firmware chính thức không có Serial-Number/HMAC eFuse.',
                 ),
               ),
@@ -222,7 +222,7 @@ class _XiaozhiOfficialSetupScreenState
                 color: Colors.orange,
                 child: Text(
                   'Đây là hành vi phía api.tenclass.net đã được ghi nhận cả trên client/firmware Xiaozhi: '
-                  'sau OTA có thể vẫn nhận test-token/GID_test. Bản v3.3 không còn kết luận thất bại chỉ '
+                  'sau OTA có thể vẫn nhận test-token/GID_test. Bản v4 không kết luận thất bại chỉ '
                   'dựa vào tên token. Thay vào đó app sẽ mở WebSocket với đúng Device-ID + Client-ID và '
                   'chỉ cho lưu khi server trả hello hợp lệ trong 10 giây.',
                 ),

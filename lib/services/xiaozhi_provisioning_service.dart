@@ -69,7 +69,7 @@ class XiaozhiProvisioningResult {
 class XiaozhiProvisioningService {
   static const String officialOtaUrl =
       'https://api.tenclass.net/xiaozhi/ota/';
-  static const String appVersion = '3.3.0';
+  static const String appVersion = '4.0.0';
 
   static Future<XiaozhiProvisioningResult> provision({
     String otaUrl = officialOtaUrl,
@@ -127,17 +127,16 @@ class XiaozhiProvisioningService {
     print(
       'XiaozhiProvisioning: HTTP ${response.statusCode} finalUrl=$finalUrl',
     );
-    print('XiaozhiProvisioning: raw=$bodyText');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('OTA HTTP ${response.statusCode}: $bodyText');
+      throw Exception('OTA HTTP ${response.statusCode}.');
     }
 
     final dynamic decodedDynamic;
     try {
       decodedDynamic = jsonDecode(bodyText);
     } catch (_) {
-      throw Exception('Phản hồi OTA không phải JSON hợp lệ: $bodyText');
+      throw Exception('Phản hồi OTA không phải JSON hợp lệ.');
     }
 
     if (decodedDynamic is! Map) {
@@ -146,6 +145,8 @@ class XiaozhiProvisioningService {
     final decoded = decodedDynamic.map<String, dynamic>(
       (key, value) => MapEntry(key.toString(), value),
     );
+    final redacted = _redactMap(decoded);
+    print('XiaozhiProvisioning: raw(redacted)=${jsonEncode(redacted)}');
 
     final websocket = _asMap(decoded['websocket']);
     final activation = _asMap(decoded['activation']);
@@ -193,8 +194,31 @@ class XiaozhiProvisioningService {
       isHealthResponse: isHealth,
       httpStatus: response.statusCode,
       finalUrl: finalUrl,
-      raw: decoded,
+      raw: redacted,
     );
+  }
+
+
+  static Map<String, dynamic> _redactMap(Map<String, dynamic> input) {
+    dynamic scrub(dynamic value, [String key = '']) {
+      final lower = key.toLowerCase();
+      if (lower.contains('token') ||
+          lower.contains('password') ||
+          lower.contains('secret') ||
+          lower.contains('authorization') ||
+          lower.contains('username')) {
+        return '[REDACTED]';
+      }
+      if (value is Map) {
+        return value.map((k, v) => MapEntry(k.toString(), scrub(v, k.toString())));
+      }
+      if (value is List) {
+        return value.map((item) => scrub(item)).toList();
+      }
+      return value;
+    }
+
+    return Map<String, dynamic>.from(scrub(input) as Map);
   }
 
   static Map<String, dynamic> _asMap(dynamic value) {

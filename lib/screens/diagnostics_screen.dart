@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:ai_assistant/providers/config_provider.dart';
 import 'package:ai_assistant/services/xiaozhi_service.dart';
 import 'package:ai_assistant/services/native_speech_service.dart';
+import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
   const DiagnosticsScreen({super.key});
@@ -17,6 +18,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   String _xiaozhiStatus = 'Chưa kiểm tra';
   String _latency = '--';
   String _nativeAsrStatus = 'Chưa kiểm tra';
+  String _toolStatus = 'Chưa kiểm tra';
+  bool _testingTools = false;
 
   @override
   void initState() {
@@ -38,6 +41,41 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _nativeAsrStatus = 'Tiếng Việt: ${vi ? "PASS" : "thiếu"} • 中文: ${zh ? "PASS" : "thiếu"}';
       });
     }
+  }
+
+  Future<void> _testTools() async {
+    setState(() {
+      _testingTools = true;
+      _toolStatus = 'Đang kiểm tra…';
+    });
+    final engine = RealtimeToolEngine();
+    var passed = 0;
+    final failures = <String>[];
+    final cases = <(String, String, Map<String, String>)>[
+      ('lunar_calendar', 'Âm lịch hôm nay', const {}),
+      ('fx_rate', 'Tỷ giá USD VND', const {'from': 'USD', 'to': 'VND'}),
+      ('crypto_price', 'Giá Bitcoin', const {'symbol': 'BTC'}),
+      ('weather', 'Thời tiết Hà Nội', const {'location': 'Hà Nội'}),
+    ];
+    for (final item in cases) {
+      try {
+        final result = await engine.execute(item.$1, query: item.$2, parameters: item.$3);
+        if (result.success) {
+          passed++;
+        } else {
+          failures.add(item.$1);
+        }
+      } catch (_) {
+        failures.add(item.$1);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _testingTools = false;
+      _toolStatus = failures.isEmpty
+          ? 'PASS $passed/${cases.length} core tools'
+          : 'PASS $passed/${cases.length} • lỗi: ${failures.join(', ')}';
+    });
   }
 
   Future<void> _testXiaozhi() async {
@@ -115,6 +153,14 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               trailing: TextButton(onPressed: _testNativeAsr, child: const Text('Kiểm tra')),
             ),
             _StatusTile(
+              icon: Icons.travel_explore_rounded,
+              title: 'Realtime Tool Engine v4',
+              subtitle: _toolStatus,
+              trailing: _testingTools
+                  ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                  : TextButton(onPressed: _testTools, child: const Text('Kiểm tra')),
+            ),
+            _StatusTile(
               icon: Icons.hub_outlined,
               title: 'Xiaozhi',
               subtitle: '${provider.xiaozhiConfigs.length} cấu hình • $_xiaozhiStatus',
@@ -157,7 +203,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Mẹo v3.3: với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Xổ số và nhạc online được xử lý bởi tool trong APK trước khi gửi Agent.',
+                  'Mẹo v4.0: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
                   style: TextStyle(height: 1.45),
                 ),
               ),

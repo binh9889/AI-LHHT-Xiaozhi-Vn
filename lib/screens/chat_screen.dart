@@ -19,6 +19,7 @@ import 'package:ai_assistant/services/xiaozhi_service.dart';
 import 'package:ai_assistant/services/translation_service.dart';
 import 'package:ai_assistant/services/native_speech_service.dart';
 import 'package:ai_assistant/services/realtime_tool_service.dart';
+import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
 import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:ai_assistant/services/minimax_service.dart';
 import 'package:ai_assistant/widgets/message_bubble.dart';
@@ -59,6 +60,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late InterpreterTurnController _interpreterTurn;
   final NativeSpeechService _nativeSpeech = NativeSpeechService.instance;
   final RealtimeToolService _realtimeTools = RealtimeToolService();
+  final RealtimeToolEngine _toolEngine = RealtimeToolEngine();
   bool _usingNativeSpeech = false;
   String _nativePartialTranscript = '';
   bool _pendingOnlineMusicSearch = false;
@@ -328,6 +330,27 @@ class _ChatScreenState extends State<ChatScreen> {
     String text,
     ConversationProvider conversationProvider,
   ) async {
+    // v4: Realtime Tool Engine được chạy TRƯỚC Agent. Những câu về thời tiết,
+    // tỷ giá, crypto, tin tức, xổ số… không còn bị đẩy bừa lên Xiaozhi.
+    final toolResult = await _toolEngine.handle(text);
+    if (toolResult != null) {
+      _pendingOnlineMusicSearch = false;
+      _suppressAgentRepliesUntil = DateTime.now().add(const Duration(seconds: 5));
+      await _xiaozhiService?.interruptResponse();
+      final message = toolResult.success
+          ? toolResult.summary
+          : (toolResult.userMessage ?? toolResult.summary);
+      await conversationProvider.addMessage(
+        conversationId: widget.conversation.id,
+        role: MessageRole.assistant,
+        content: message,
+      );
+      _scrollToBottom();
+      await _speakInterpreter(message, 'vi-VN');
+      return true;
+    }
+
+    // Music vẫn là engine riêng vì nó cần mở trình phát in-app.
     final result = await _realtimeTools.handle(
       text,
       forceMusic: _pendingOnlineMusicSearch,

@@ -1,9 +1,9 @@
-name: Build AI-LHHT v3.4 Voice Pro Reliable Tools APK
+name: Build AI-LHHT v4 Realtime Tools Pro APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, develop-v3 ]
+    branches: [ main, develop-v3, develop-v4 ]
     paths:
       - 'lib/**'
       - 'android/**'
@@ -11,12 +11,13 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'test/**'
+      - 'scripts/**'
       - '.github/workflows/build-vi-apk.yml'
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +35,9 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Static v4 source checks
+        run: bash scripts/verify_v4.sh --static-only
+
       - name: Analyze Dart
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
@@ -46,6 +50,9 @@ jobs:
           test/xiaozhi_websocket_manager_test.dart
           test/interpreter_turn_controller_test.dart
           test/realtime_tool_service_test.dart
+          test/tool_registry_test.dart
+          test/tool_intent_router_test.dart
+          test/realtime_tool_engine_local_test.dart
 
       - name: Fix flutter_pcm_player Android namespace
         shell: bash
@@ -65,19 +72,19 @@ jobs:
           fi
 
       - name: Build APK
-        run: flutter build apk --debug --build-name=3.4.0 --build-number=340
+        run: flutter build apk --debug --build-name=4.0.0 --build-number=400
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-debug.apk AI-LHHT-v3.4.0-Voice-Pro-InApp-Music-Reliable-Tools-VI.apk
+        run: cp build/app/outputs/flutter-apk/app-debug.apk AI-LHHT-v4.0.0-Realtime-Tools-Pro-VI.apk
 
       - name: SHA256
-        run: sha256sum AI-LHHT-v3.4.0-Voice-Pro-InApp-Music-Reliable-Tools-VI.apk | tee AI-LHHT-v3.4.0-Voice-Pro-InApp-Music-Reliable-Tools-VI.apk.sha256
+        run: sha256sum AI-LHHT-v4.0.0-Realtime-Tools-Pro-VI.apk | tee AI-LHHT-v4.0.0-Realtime-Tools-Pro-VI.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI-LHHT-v3.4.0-Voice-Pro-InApp-Music-Reliable-Tools-VI
+          name: AI-LHHT-v4.0.0-Realtime-Tools-Pro-VI
           retention-days: 30
           path: |
-            AI-LHHT-v3.4.0-Voice-Pro-InApp-Music-Reliable-Tools-VI.apk
-            AI-LHHT-v3.4.0-Voice-Pro-InApp-Music-Reliable-Tools-VI.apk.sha256
+            AI-LHHT-v4.0.0-Realtime-Tools-Pro-VI.apk
+            AI-LHHT-v4.0.0-Realtime-Tools-Pro-VI.apk.sha256
