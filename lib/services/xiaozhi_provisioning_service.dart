@@ -35,12 +35,12 @@ class XiaozhiProvisioningResult {
 
 /// Provisioning layer for Xiaozhi-compatible OTA endpoints.
 ///
-/// The official ESP32 firmware obtains the communication server and, for new
-/// devices, an activation code from the OTA step before opening WebSocket.
-/// The public server may deliberately return test credentials for unsupported
-/// device identities; the app exposes that state instead of pretending the
-/// phone is already bound to an agent.
+/// The official ESP32 firmware uses a JSON POST request to the OTA URL and
+/// expects device metadata, activation version, and optional serial number.
+/// This implementation mirrors that protocol while keeping Android-compatible
+/// field names when the ESP32-specific fields do not exist on mobile.
 class XiaozhiProvisioningService {
+  static const String TAG = 'XiaozhiProvisioning';
   static const String officialOtaUrl =
       'https://api.tenclass.net/xiaozhi/ota/';
 
@@ -51,20 +51,48 @@ class XiaozhiProvisioningService {
     final clientId = await DeviceUtil.getStableClientId();
     final model = await DeviceUtil.getDeviceModel();
     final os = await DeviceUtil.getOsVersion();
+    final serialNumber = _stableSerialNumber(deviceId, clientId);
+    final requestBody = _buildSystemInfoPayload(
+      deviceId: deviceId,
+      clientId: clientId,
+      model: model,
+      osVersion: os,
+      language: 'vi-VN',
+      version: '2.1.0',
+    );
+    final requestJson = jsonEncode(requestBody);
+    final userAgent = 'xiaozhi-android-client/2.1.0 ($model; $os)';
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
+      'User-Agent': userAgent,
+      'Device-Id': deviceId,
+      'Client-Id': clientId,
+      'Activation-Version': '2',
+      'Serial-Number': serialNumber,
+      'Content-Type': 'application/json',
+    };
 
     final uri = Uri.parse(otaUrl);
+
+    print('$TAG: method=POST');
+    print('$TAG: url=$uri');
+    print('$TAG: headers={Accept: application/json, Accept-Language: vi-VN,vi;q=0.9,en;q=0.8, User-Agent: $userAgent, Device-Id: $deviceId, Client-Id: $clientId, Activation-Version: 2, Serial-Number: $serialNumber, Content-Type: application/json}');
+    print('$TAG: body=$requestJson');
+
     final response = await http
-        .get(
+        .post(
           uri,
-          headers: {
-            'Accept': 'application/json',
-            'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
-            'User-Agent': 'xiaozhi-android-client/2.1.0 ($model; $os)',
-            'Device-Id': deviceId,
-            'Client-Id': clientId,
-          },
+          headers: headers,
+          body: requestJson,
         )
         .timeout(const Duration(seconds: 20));
+
+    final finalUrl = response.request?.url.toString() ?? uri.toString();
+    print('$TAG: status=${response.statusCode}');
+    print('$TAG: final_url=$finalUrl');
+    print('$TAG: response_headers=${response.headers}');
+    print('$TAG: raw_response=${response.body}');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
@@ -79,6 +107,8 @@ class XiaozhiProvisioningService {
 
     final websocket = _asMap(decoded['websocket']);
     final activation = _asMap(decoded['activation']);
+    final mqtt = _asMap(decoded['mqtt']);
+    final firmware = _asMap(decoded['firmware']);
 
     final wsUrl = _readString(websocket, ['url', 'endpoint']);
     final token = _readString(websocket, ['token', 'access_token']);
@@ -90,9 +120,10 @@ class XiaozhiProvisioningService {
       activation,
       ['message', 'text', 'instruction'],
     );
-
-    final mqtt = _asMap(decoded['mqtt']);
     final mqttClientId = _readString(mqtt, ['client_id']) ?? '';
+    final firmwareVersion = _readString(firmware, ['version']) ??
+        _readString(decoded, ['firmware_version', 'version']) ??
+        '';
     final isTest = token == 'test-token' || mqttClientId.contains('GID_test');
 
     return XiaozhiProvisioningResult(
@@ -106,6 +137,37 @@ class XiaozhiProvisioningService {
       isTestCredential: isTest,
       raw: decoded,
     );
+  }
+
+  /// Stable serial fallback used when the device has no official hardware serial.
+  /// This is derived from the device/client identity and kept deterministic across
+  /// app restarts so that a service can recognize the same Android device without
+  /// generating a new random serial each run.
+  static String _stableSerialNumber(String deviceId, String clientId) {
+    final seed = '$deviceId:$clientId';
+    final digest = sha256.convert(utf8.encode(seed));
+    return digest.toString().substring(0, 32).toLowerCase();
+  }
+
+  static Map<String, dynamic> _buildSystemInfoPayload({
+    required String deviceId,
+    required String clientId,
+    required String model,
+    required String osVersion,
+    required String language,
+    required String version,
+  }) {
+    return <String, dynamic>{
+      'version': version,
+      'language': language,
+      'mac_address': deviceId,
+      'device_id': deviceId,
+      'uuid': clientId,
+      'client_id': clientId,
+      'platform': 'android',
+      'os_version': osVersion,
+      'device_model': model,
+    };
   }
 
   static Map<String, dynamic> _asMap(dynamic value) {
