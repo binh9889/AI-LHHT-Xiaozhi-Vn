@@ -10,6 +10,7 @@ import 'package:just_audio/just_audio.dart' as ja;
 import 'package:audio_session/audio_session.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter_pcm_player/flutter_pcm_player.dart';
+import 'pcm_frame_buffer.dart';
 
 /// 音频工具类，用于处理Opus音频编解码和录制播放
 class AudioUtil {
@@ -28,6 +29,10 @@ class AudioUtil {
       StreamController<Uint8List>.broadcast();
   static String? _tempFilePath;
   static Timer? _audioProcessingTimer;
+  static StreamSubscription<Uint8List>? _recorderStreamSubscription;
+  static final PcmFrameBuffer _pcmFrames = PcmFrameBuffer(
+    frameBytes: SAMPLE_RATE * FRAME_DURATION ~/ 1000 * 2,
+  );
 
   // Opus相关
   static final _encoder = SimpleOpusEncoder(
@@ -198,6 +203,9 @@ class AudioUtil {
 
   /// 释放资源
   static Future<void> dispose() async {
+    await _recorderStreamSubscription?.cancel();
+    _recorderStreamSubscription = null;
+    _pcmFrames.clear();
     _audioStreamController.close();
     print('$TAG: 资源已释放');
   }
@@ -234,29 +242,35 @@ class AudioUtil {
             encoder: AudioEncoder.pcm16bits,
             sampleRate: SAMPLE_RATE,
             numChannels: CHANNELS,
+            // Android record 5.x hỗ trợ các hiệu ứng này khi thiết bị có.
+            // Auto-gain + noise suppression giúp tín hiệu thoại ổn định hơn;
+            // echo cancellation giảm tiếng loa lọt lại mic trong voice chat.
+            autoGain: true,
+            noiseSuppress: true,
+            echoCancel: true,
           ),
         );
 
         _isRecording = true;
         print('$TAG: 流式录音启动Thành công');
 
-        // 直接从流中处理数据
-        stream.listen(
-          (data) async {
-            if (data.isNotEmpty && data.length % 2 == 0) {
-              final opusData = await encodeToOpus(data);
-              if (opusData != null) {
-                _audioStreamController.add(opusData);
-              }
-            }
+        // Record.startStream() không bảo đảm mỗi chunk đúng 60 ms.
+        // Bản cũ encode từng chunk và chỉ lấy 960 sample đầu tiên, vì vậy
+        // có thể làm RƠI phần lớn audio hoặc chèn silence khi chunk ngắn.
+        // Điều đó làm ASR nghe sai dù microphone phần cứng vẫn tốt.
+        _pcmFrames.clear();
+        await _recorderStreamSubscription?.cancel();
+        _recorderStreamSubscription = stream.listen(
+          (data) {
+            if (data.isEmpty) return;
+            _consumePcmBytes(data);
           },
           onError: (error) {
-            print('$TAG: 音频流Lỗi: $error');
+            print('$TAG: Lỗi luồng audio: $error');
             _isRecording = false;
           },
           onDone: () {
-            print('$TAG: 音频流结束');
-            _isRecording = false;
+            print('$TAG: Luồng audio đã kết thúc');
           },
         );
       } catch (e) {
@@ -281,8 +295,11 @@ class AudioUtil {
     // 停止录音
     try {
       final path = await _audioRecorder.stop();
+      await _recorderStreamSubscription?.cancel();
+      _recorderStreamSubscription = null;
+      _pcmFrames.clear();
       _isRecording = false;
-      print('$TAG: 停止录音: $path');
+      print('$TAG: Đã dừng ghi âm: $path');
       return path;
     } catch (e) {
       print('$TAG: 停止录音Thất bại: $e');
@@ -291,46 +308,43 @@ class AudioUtil {
     }
   }
 
-  /// 将PCM数据编码为Opus格式
-  static Future<Uint8List?> encodeToOpus(Uint8List pcmData) async {
+  /// Tích lũy PCM16 little-endian và chỉ encode khi đủ đúng 60 ms.
+  /// 16 kHz * 60 ms = 960 sample = 1920 byte mono PCM16.
+  static void _consumePcmBytes(Uint8List data) {
+    for (final frame in _pcmFrames.add(data)) {
+      final opusData = _encodeExactPcmFrame(frame);
+      if (opusData != null && opusData.isNotEmpty) {
+        _audioStreamController.add(opusData);
+      }
+    }
+  }
+
+  static Uint8List? _encodeExactPcmFrame(Uint8List pcmData) {
     try {
-      // Xóa频繁日志
-      // 转换PCM数据为Int16List (小端字节序，与Android一致)
-      final Int16List pcmInt16 = Int16List.fromList(
-        List.generate(
-          pcmData.length ~/ 2,
-          (i) => (pcmData[i * 2]) | (pcmData[i * 2 + 1] << 8),
-        ),
-      );
-
-      // 确保数据长度符合Opus要求（必须是2.5ms、5ms、10ms、20ms、40ms或60ms的采样数）
       final int samplesPerFrame = (SAMPLE_RATE * FRAME_DURATION) ~/ 1000;
+      if (pcmData.length != samplesPerFrame * 2) return null;
 
-      Uint8List encoded;
-
-      // 处理过短的数据
-      if (pcmInt16.length < samplesPerFrame) {
-        // 对于过短的数据，可以通过Thêm静音来填充到所需长度
-        final Int16List paddedData = Int16List(samplesPerFrame);
-        for (int i = 0; i < pcmInt16.length; i++) {
-          paddedData[i] = pcmInt16[i];
-        }
-
-        // 编码填充后的数据
-        encoded = Uint8List.fromList(_encoder.encode(input: paddedData));
-      } else {
-        // 对于足够长的数据，裁剪到精确的帧长度
-        encoded = Uint8List.fromList(
-          _encoder.encode(input: pcmInt16.sublist(0, samplesPerFrame)),
-        );
+      final pcmInt16 = Int16List(samplesPerFrame);
+      final byteData = ByteData.sublistView(pcmData);
+      for (int i = 0; i < samplesPerFrame; i++) {
+        pcmInt16[i] = byteData.getInt16(i * 2, Endian.little);
       }
 
-      return encoded;
+      return Uint8List.fromList(_encoder.encode(input: pcmInt16));
     } catch (e, stackTrace) {
-      print('$TAG: Opus编码Thất bại: $e');
+      print('$TAG: Opus frame encode lỗi: $e');
       print(stackTrace);
       return null;
     }
+  }
+
+  /// Giữ API cũ nhưng KHÔNG pad silence hoặc cắt bỏ audio.
+  static Future<Uint8List?> encodeToOpus(Uint8List pcmData) async {
+    const int bytesPerFrame = SAMPLE_RATE * FRAME_DURATION ~/ 1000 * 2;
+    if (pcmData.length != bytesPerFrame) {
+      return null;
+    }
+    return _encodeExactPcmFrame(pcmData);
   }
 
   /// 检查是否正在录音

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo '== AI-LHHT v3 source checks =='
-grep -q '^version: 3.1.0+310$' pubspec.yaml
+grep -q '^version: 3.2.0+320$' pubspec.yaml
 grep -q 'flutter_tts:' pubspec.yaml
 test -f lib/screens/interpreter_screen.dart
 test -f lib/screens/diagnostics_screen.dart

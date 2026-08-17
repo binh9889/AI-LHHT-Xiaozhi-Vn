@@ -90,8 +90,8 @@ class SettingsScreen extends StatelessWidget {
             const Card(
               child: ListTile(
                 leading: Icon(Icons.verified_outlined),
-                title: Text('AI-LHHT v3.0 Voice Pro', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('3.1.0+310 • Voice Pro Live Interpreter'),
+                title: Text('AI-LHHT v3.2 Voice Pro', style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('3.2.0+320 • Real Connect + Voice Integrity'),
               ),
             ),
           ],

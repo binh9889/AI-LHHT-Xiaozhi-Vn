@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/config_provider.dart';
 import '../services/xiaozhi_provisioning_service.dart';
+import '../services/xiaozhi_websocket_manager.dart';
 
 class XiaozhiOfficialSetupScreen extends StatefulWidget {
   const XiaozhiOfficialSetupScreen({super.key});
@@ -18,11 +19,16 @@ class _XiaozhiOfficialSetupScreenState
   bool _loading = false;
   XiaozhiProvisioningResult? _result;
   String? _error;
+  bool _verifyingWebSocket = false;
+  bool _protocolHandshakeOk = false;
+  String? _protocolStatus;
 
   Future<void> _runProvisioning() async {
     setState(() {
       _loading = true;
       _error = null;
+      _protocolHandshakeOk = false;
+      _protocolStatus = null;
     });
     try {
       final result = await XiaozhiProvisioningService.provision();
@@ -36,9 +42,45 @@ class _XiaozhiOfficialSetupScreenState
     }
   }
 
+  Future<void> _verifyWebSocketProtocol() async {
+    final result = _result;
+    if (result == null || !result.canConnectDiagnostic) return;
+
+    setState(() {
+      _verifyingWebSocket = true;
+      _protocolHandshakeOk = false;
+      _protocolStatus = 'Đang mở WebSocket và chờ server hello...';
+    });
+
+    final manager = XiaozhiWebSocketManager(
+      deviceId: result.deviceId,
+      clientId: result.clientId,
+      enableToken: true,
+    );
+
+    try {
+      await manager.connect(result.websocketUrl!, result.token!);
+      if (!mounted) return;
+      setState(() {
+        _protocolHandshakeOk = true;
+        _protocolStatus =
+            'PASS: máy chủ đã trả hello hợp lệ. Đây là kết nối giao thức thật, không phải chỉ HTTP 200.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _protocolHandshakeOk = false;
+        _protocolStatus = 'FAIL: $e';
+      });
+    } finally {
+      await manager.disconnect();
+      if (mounted) setState(() => _verifyingWebSocket = false);
+    }
+  }
+
   Future<void> _saveConnection() async {
     final result = _result;
-    if (result == null || !result.canConnectProduction) return;
+    if (result == null || !_protocolHandshakeOk || !result.canConnectDiagnostic) return;
 
     await Provider.of<ConfigProvider>(context, listen: false)
         .addXiaozhiConfigWithToken(
@@ -156,7 +198,7 @@ class _XiaozhiOfficialSetupScreenState
                 color: Colors.orange,
                 child: Text(
                   'Máy chủ chỉ trả trạng thái hoạt động, chưa trả activation/websocket. '
-                  'Bản v3.1 dùng POST theo cấu trúc application + board và Activation-Version=1 '
+                  'Bản v3.2 dùng POST theo cấu trúc application + board và Activation-Version=1 '
                   'theo nhánh firmware chính thức không có Serial-Number/HMAC eFuse.',
                 ),
               ),
@@ -176,39 +218,61 @@ class _XiaozhiOfficialSetupScreenState
             if (result.isTestCredential) ...[
               const SizedBox(height: 12),
               const _InfoCard(
-                title: 'Máy chủ đang trả tài khoản thử nghiệm',
+                title: 'OTA vẫn trả test-token / GID_test',
                 color: Colors.orange,
                 child: Text(
-                  'Phản hồi hiện tại chứa test-token/GID_test nên đây chỉ là cấu hình '
-                  'chẩn đoán, không phải thông tin liên kết Agent thật. App sẽ không '
-                  'lưu credential thử nghiệm thành cấu hình production. Mã 6 số chỉ '
-                  'xuất hiện khi OTA trả trường activation.code.',
+                  'Đây là hành vi phía api.tenclass.net đã được ghi nhận cả trên client/firmware Xiaozhi: '
+                  'sau OTA có thể vẫn nhận test-token/GID_test. Bản v3.2 không còn kết luận thất bại chỉ '
+                  'dựa vào tên token. Thay vào đó app sẽ mở WebSocket với đúng Device-ID + Client-ID và '
+                  'chỉ cho lưu khi server trả hello hợp lệ trong 10 giây.',
                 ),
               ),
             ],
-            if (result.canConnectProduction) ...[
+            if (result.canConnectDiagnostic) ...[
               const SizedBox(height: 12),
               _InfoCard(
-                title: 'Thông tin WebSocket production',
+                title: result.isTestCredential
+                    ? 'WebSocket do OTA cấp'
+                    : 'WebSocket production',
+                color: result.isTestCredential ? Colors.orange : Colors.green,
                 child: SelectableText(
-                  '${result.websocketUrl}\nToken: đã được cấp',
+                  '${result.websocketUrl}\nToken: đã ẩn',
                 ),
               ),
               const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed: _saveConnection,
-                icon: const Icon(Icons.check_circle_outline_rounded),
-                label: const Text('Lưu và sử dụng Agent'),
-              ),
-            ] else if (result.canConnectDiagnostic) ...[
-              const SizedBox(height: 12),
-              _InfoCard(
-                title: 'WebSocket chẩn đoán',
-                color: Colors.orange,
-                child: SelectableText(
-                  '${result.websocketUrl}\nToken: credential thử nghiệm – không lưu production',
+                onPressed: _verifyingWebSocket ? null : _verifyWebSocketProtocol,
+                icon: _verifyingWebSocket
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cable_rounded),
+                label: Text(
+                  _verifyingWebSocket
+                      ? 'Đang chờ server hello...'
+                      : 'Kiểm tra kết nối Agent thật',
                 ),
               ),
+              if (_protocolStatus != null) ...[
+                const SizedBox(height: 10),
+                _InfoCard(
+                  title: _protocolHandshakeOk
+                      ? 'WebSocket protocol: PASS'
+                      : 'WebSocket protocol',
+                  color: _protocolHandshakeOk ? Colors.green : Colors.orange,
+                  child: Text(_protocolStatus!),
+                ),
+              ],
+              if (_protocolHandshakeOk) ...[
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: _saveConnection,
+                  icon: const Icon(Icons.check_circle_outline_rounded),
+                  label: const Text('Lưu kết nối đã xác minh và sử dụng Agent'),
+                ),
+              ],
             ],
             if (result.hasActivationCode) ...[
               const SizedBox(height: 12),
