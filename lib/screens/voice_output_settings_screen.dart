@@ -83,7 +83,7 @@ class _VoiceOutputSettingsScreenState extends State<VoiceOutputSettingsScreen> {
                     secondary: const Icon(Icons.phone_android_rounded),
                     title: const Text('Dùng TTS Android thay thế'),
                     subtitle: const Text(
-                      'Chỉ bật khi bạn thực sự muốn thay giọng Xiaozhi. Chế độ này không được bật mặc định ở v4.1.2.',
+                      'Chỉ bật khi bạn thực sự muốn thay giọng Xiaozhi. Chế độ này không được bật mặc định ở v4.1.3.',
                     ),
                   ),
                 ),

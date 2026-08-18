@@ -1,7 +1,7 @@
 /// Dọn văn bản trước khi hiển thị/đọc thành tiếng.
 ///
-/// Mục tiêu là loại bỏ các dấu Markdown/command nội bộ mà backend Xiaozhi
-/// đôi khi gửi trong `tts.sentence_start`, nhưng không "viết lại" nội dung.
+/// Bản này cố ý dùng các phép biến đổi đơn giản, xác định được thay vì regex
+/// phức tạp để tránh khác biệt RegExp giữa môi trường test/build.
 class ResponseTextSanitizer {
   const ResponseTextSanitizer._();
 
@@ -18,38 +18,49 @@ class ResponseTextSanitizer {
     var text = input.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
     if (text.isEmpty || isInternalToolCommand(text)) return '';
 
-    // Markdown emphasis / inline-code thường bị đọc thành "sao sao" hoặc
-    // xuất hiện nguyên `**` trong bong bóng chat.
+    // Loại Markdown emphasis / inline-code. Làm theo marker literal để kết quả
+    // ổn định và không phụ thuộc capture/back-reference.
     text = text
-        .replaceAllMapped(RegExp(r'\*\*([^*\n]+)\*\*'), (m) => m.group(1) ?? '')
-        .replaceAllMapped(RegExp(r'__([^_\n]+)__'), (m) => m.group(1) ?? '')
-        .replaceAllMapped(RegExp(r'\*([^*\n]+)\*'), (m) => m.group(1) ?? '')
-        .replaceAllMapped(RegExp(r'_([^_\n]+)_'), (m) => m.group(1) ?? '')
+        .replaceAll('**', '')
+        .replaceAll('__', '')
         .replaceAll('`', '');
 
-    // Heading/list markdown -> văn bản thuần, dễ đọc hơn bằng TTS.
-    text = text
-        .replaceAll(RegExp(r'(?m)^\s{0,3}#{1,6}\s*'), '')
-        .replaceAll(RegExp(r'(?m)^\s*[-*+]\s+'), '• ')
-        .replaceAll(RegExp(r'(?m)^\s*>\s?'), '');
+    // Xử lý emphasis đơn còn sót. Chỉ bỏ marker, không viết lại nội dung.
+    text = text.replaceAll('*', '');
 
-    // Loại command marker bị lẫn đầu câu nhưng giữ phần nội dung phía sau.
-    text = text.replaceAll(
-      RegExp(r'(?im)^\s*%\s*[a-z_][\w.-]*\.{0,3}\s*\n?'),
-      '',
-    );
+    // Heading / quote / list marker ở đầu dòng.
+    final lines = <String>[];
+    for (final rawLine in text.split('\n')) {
+      var line = rawLine.trimRight();
+      line = line.replaceFirst(RegExp(r'^\s*#{1,6}\s*'), '');
+      line = line.replaceFirst(RegExp(r'^\s*>\s?'), '');
+      line = line.replaceFirst(RegExp(r'^\s*[-+]\s+'), '• ');
+      lines.add(line);
+    }
+    text = lines.join('\n');
 
-    // Dọn khoảng trắng/dấu câu bị lặp do ghép nhiều sentence_start.
+    // Command nội bộ đứng đầu một dòng: bỏ cả dòng đó.
+    final kept = <String>[];
+    for (final rawLine in text.split('\n')) {
+      final line = rawLine.trim();
+      if (isInternalToolCommand(line)) continue;
+      kept.add(rawLine);
+    }
+    text = kept.join('\n');
+
+    // Dọn khoảng trắng.
     text = text
         .replaceAll(RegExp(r'[ \t]+\n'), '\n')
         .replaceAll(RegExp(r'\n[ \t]+'), '\n')
         .replaceAll(RegExp(r'[ \t]{2,}'), ' ')
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-        .replaceAllMapped(
-          RegExp(r'([!?.,])\1{1,}'),
-          (match) => match.group(1) ?? '',
-        )
         .trim();
+
+    // Dọn dấu câu lặp mà không dùng back-reference.
+    while (text.contains('..')) text = text.replaceAll('..', '.');
+    while (text.contains('!!')) text = text.replaceAll('!!', '!');
+    while (text.contains('??')) text = text.replaceAll('??', '?');
+    while (text.contains(',,')) text = text.replaceAll(',,', ',');
 
     if (compact) {
       text = text
@@ -69,13 +80,27 @@ class ResponseTextSanitizer {
   }) {
     final value = clean(input, compact: true);
     if (value.isEmpty) return '';
-    final parts = RegExp(r'[^.!?]+[.!?]?')
-        .allMatches(value)
-        .map((m) => (m.group(0) ?? '').trim())
-        .where((part) => part.isNotEmpty)
-        .take(maxSentences)
-        .toList();
-    var result = parts.isEmpty ? value : parts.join(' ');
+
+    final parts = <String>[];
+    final buffer = StringBuffer();
+    for (var i = 0; i < value.length; i++) {
+      final ch = value[i];
+      buffer.write(ch);
+      if (ch == '.' || ch == '!' || ch == '?') {
+        final sentence = buffer.toString().trim();
+        if (sentence.isNotEmpty) parts.add(sentence);
+        buffer.clear();
+        if (parts.length >= maxSentences) break;
+      }
+    }
+    if (parts.length < maxSentences) {
+      final tail = buffer.toString().trim();
+      if (tail.isNotEmpty) parts.add(tail);
+    }
+
+    var result = parts.isEmpty
+        ? value
+        : parts.take(maxSentences).join(' ').trim();
     if (result.length > maxChars) {
       result = '${result.substring(0, maxChars).trimRight()}…';
     }

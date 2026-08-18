@@ -50,7 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _connectionCheckTimer; // Thêm定时器检查连接状态
   Timer? _autoReconnectTimer; // 自动重连定时器
 
-  // v4.1.2: mặc định giữ nguyên audio TTS do Xiaozhi cloud gửi về. Đây là
+  // v4.1.3: mặc định giữ nguyên audio TTS do Xiaozhi cloud gửi về. Đây là
   // giọng Agent đã chọn trên xiaozhi.me (ví dụ Female Voice). Android TTS chỉ
   // là fallback/phiên dịch và không được âm thầm thay giọng của Agent.
   final UnifiedSpeechOutputService _speechOutput =

@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Cấu hình đầu ra giọng nói v4.1.2.
+/// Cấu hình đầu ra giọng nói v4.1.3.
 ///
 /// Mặc định LUÔN ưu tiên audio TTS do Xiaozhi cloud gửi về. Đây chính là
 /// giọng đã chọn cho Agent trên xiaozhi.me (ví dụ "Giọng nữ / Female Voice").

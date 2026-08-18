@@ -1,8 +1,8 @@
-# AI-LHHT v4.1.2 – Realtime Tools Pro
+# AI-LHHT v4.1.3 – Realtime Tools Pro
 
 AI-LHHT v4 refactor luồng hội thoại theo kiến trúc **Voice → ASR → Intent Router → Tool / Music / Interpreter / Xiaozhi Agent → TTS**. Mục tiêu là không gửi mọi câu hỏi realtime sang Agent rồi chờ Agent tự biết dữ liệu.
 
-### v4.1.2 Native Voice / Weather Clean
+### v4.1.3 Native Voice / Weather Clean
 
 - Giữ audio Female Voice do Xiaozhi cloud gửi qua WebSocket; không tự thay bằng TTS Android.
 - Sửa race đổi downlink sample-rate làm PCM player bị stop đúng lúc `tts:start`.

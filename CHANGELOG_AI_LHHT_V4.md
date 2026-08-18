@@ -1,6 +1,6 @@
 # CHANGELOG – AI-LHHT v4
 
-## 4.1.2+412 – Native Voice + Weather Clean Pro
+## 4.1.3+413 – Native Voice + Weather Clean Pro
 
 
 - Sửa race ở cloud TTS: đổi sample-rate theo server hello không còn stop/re-create PCM player đúng lúc `tts:start`.

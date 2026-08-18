@@ -1,9 +1,9 @@
-# Build AI-LHHT v4.1.2
+# Build AI-LHHT v4.1.3
 
 ## Version
 
 ```text
-4.1.2+412
+4.1.3+413
 ```
 
 ## Kiểm tra tĩnh
@@ -29,13 +29,13 @@ flutter test \
   test/vietnamese_transcript_normalizer_test.dart \
   test/response_text_sanitizer_test.dart \
   test/realtime_tool_engine_local_test.dart
-flutter build apk --debug --build-name=4.1.2 --build-number=412
+flutter build apk --debug --build-name=4.1.3 --build-number=413
 ```
 
 APK mục tiêu:
 
 ```text
-AI-LHHT-v4.1.2-Native-Voice-Weather-Clean-Pro-VI.apk
+AI-LHHT-v4.1.3-Native-Voice-Weather-Clean-Pro-VI.apk
 ```
 
 GitHub Actions `.github/workflows/build-vi-apk.yml` chạy tự động khi push lên `develop-v4`.

@@ -3,9 +3,9 @@ set -euo pipefail
 
 STATIC_ONLY="${1:-}"
 
-echo '== AI-LHHT v4.1.2 Native Voice Weather Clean Pro source checks =='
-grep -q '^version: 4.1.2+412$' pubspec.yaml
-grep -q "static const String appVersion = '4.1.2';" lib/services/xiaozhi_provisioning_service.dart
+echo '== AI-LHHT v4.1.3 Native Voice Weather Clean Pro source checks =='
+grep -q '^version: 4.1.3+413$' pubspec.yaml
+grep -q "static const String appVersion = '4.1.3';" lib/services/xiaozhi_provisioning_service.dart
 grep -q 'version "2.1.20"' android/settings.gradle.kts
 grep -q 'android.speech.RecognitionService' android/app/src/main/AndroidManifest.xml
 grep -q 'com.google.mlkit:translate:17.0.3' android/app/build.gradle.kts

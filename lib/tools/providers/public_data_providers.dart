@@ -109,7 +109,7 @@ class PublicDataProviders {
         headers: <String, String>{
           'Accept': 'application/json',
           if (config.bridgeToken.trim().isNotEmpty) 'Authorization': 'Bearer ${config.bridgeToken.trim()}',
-          'User-Agent': 'AI-LHHT/4.1.2 Android',
+          'User-Agent': 'AI-LHHT/4.1.3 Android',
         },
       ).timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) {
@@ -748,7 +748,7 @@ class PublicDataProviders {
       try {
         final response = await _client.get(uri, headers: const {
           'Accept': 'application/json,text/xml,text/html,text/csv,*/*;q=0.8',
-          'User-Agent': 'AI-LHHT/4.1.2 Android',
+          'User-Agent': 'AI-LHHT/4.1.3 Android',
           'Cache-Control': 'no-cache',
         }).timeout(timeout);
         if (response.statusCode >= 500 && attempt == 0) {

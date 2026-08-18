@@ -756,7 +756,7 @@ class XiaozhiService {
         'capabilities': {'tools': <String, dynamic>{}},
         'serverInfo': {
           'name': 'AI-LHHT-Android',
-          'version': '4.1.2',
+          'version': '4.1.3',
         },
       });
       return;

@@ -166,7 +166,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 _PipelineItem('VAD', 'Điều khiển bởi phiên Xiaozhi', Icons.multiline_chart_rounded, provider.xiaozhiConfigs.isNotEmpty),
                 _PipelineItem('ASR', 'Native locale-locked + Xiaozhi fallback', Icons.record_voice_over_rounded, true),
                 _PipelineItem('AGENT', 'Xiaozhi / Dify / MiniMax', Icons.smart_toy_outlined, provider.xiaozhiConfigs.isNotEmpty || provider.difyConfigs.isNotEmpty || provider.minimaxConfigs.isNotEmpty),
-                _PipelineItem('TTS', 'Xiaozhi Native Voice v4.1.2 • cloud TTS ưu tiên', Icons.volume_up_rounded, true),
+                _PipelineItem('TTS', 'Xiaozhi Native Voice v4.1.3 • cloud TTS ưu tiên', Icons.volume_up_rounded, true),
               ],
             ),
             const SizedBox(height: 20),
@@ -244,7 +244,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Mẹo v4.1.2: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
+                  'Mẹo v4.1.3: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
                   style: TextStyle(height: 1.45),
                 ),
               ),

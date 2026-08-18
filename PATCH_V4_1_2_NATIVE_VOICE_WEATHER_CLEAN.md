@@ -1,4 +1,4 @@
-# AI-LHHT v4.1.2+412 – Native Voice / Weather / Clean Response Fix
+# AI-LHHT v4.1.3+413 – Native Voice / Weather / Clean Response Fix
 
 ## Lỗi runtime được nhắm tới
 
@@ -10,7 +10,7 @@
 
 ## Sửa audio Xiaozhi Native Voice
 
-- Giữ mặc định `Xiaozhi Native Voice = ON` bằng preference key v4.1.2 mới.
+- Giữ mặc định `Xiaozhi Native Voice = ON` bằng preference key v4.1.3 mới.
 - Khi Native Voice bật, app KHÔNG khởi tạo Android `FlutterTts` ở nền. Đây là cách ly audio-focus để TTS local không can thiệp đường Female Voice của Xiaozhi.
 - Đọc `audio_params.sample_rate` từ server hello.
 - Opus decoder bám đúng downlink sample-rate của server.
