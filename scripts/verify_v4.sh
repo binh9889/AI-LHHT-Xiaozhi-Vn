@@ -3,9 +3,9 @@ set -euo pipefail
 
 STATIC_ONLY="${1:-}"
 
-echo '== AI-LHHT v4.1.1 Xiaozhi Native Voice Pro source checks =='
-grep -q '^version: 4.1.1+411$' pubspec.yaml
-grep -q "static const String appVersion = '4.1.1';" lib/services/xiaozhi_provisioning_service.dart
+echo '== AI-LHHT v4.1.2 Native Voice Weather Clean Pro source checks =='
+grep -q '^version: 4.1.2+412$' pubspec.yaml
+grep -q "static const String appVersion = '4.1.2';" lib/services/xiaozhi_provisioning_service.dart
 grep -q 'version "2.1.20"' android/settings.gradle.kts
 grep -q 'android.speech.RecognitionService' android/app/src/main/AndroidManifest.xml
 grep -q 'com.google.mlkit:translate:17.0.3' android/app/build.gradle.kts
@@ -27,6 +27,7 @@ test -f test/tool_registry_test.dart
 test -f test/tool_intent_router_test.dart
 test -f test/realtime_tool_engine_local_test.dart
 test -f test/vietnamese_transcript_normalizer_test.dart
+test -f test/response_text_sanitizer_test.dart
 test -f README_V4_VI.md
 test -f BUILD_V4_VI.md
 test -f CHANGELOG_AI_LHHT_V4.md
@@ -61,6 +62,9 @@ grep -q '_handleMcpRealtimeQuery' lib/screens/chat_screen.dart
 grep -q 'Giữ giọng Xiaozhi chính thức' lib/screens/voice_output_settings_screen.dart
 grep -q 'isMcpBackendDetected' lib/services/xiaozhi_service.dart
 grep -q 'releaseResponseGate' lib/services/xiaozhi_service.dart
+grep -q 'configureDownlinkSampleRate' lib/utils/audio_util.dart
+grep -q 'ResponseTextSanitizer' lib/services/xiaozhi_service.dart
+grep -q 'self.weather.lookup' lib/services/xiaozhi_service.dart
 grep -q 'miền' lib/utils/vietnamese_transcript_normalizer.dart
 grep -q 'mắt|mắc|bắt|bát|bắc' lib/utils/vietnamese_transcript_normalizer.dart
 echo 'Static source checks: PASS'
@@ -81,6 +85,8 @@ if command -v flutter >/dev/null 2>&1; then
     test/realtime_tool_service_test.dart \
     test/tool_registry_test.dart \
     test/tool_intent_router_test.dart \
+    test/vietnamese_transcript_normalizer_test.dart \
+    test/response_text_sanitizer_test.dart \
     test/realtime_tool_engine_local_test.dart
   echo 'Flutter checks: PASS'
 else

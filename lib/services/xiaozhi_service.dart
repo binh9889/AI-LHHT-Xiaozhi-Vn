@@ -8,6 +8,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import '../services/xiaozhi_websocket_manager.dart';
 import '../utils/device_util.dart';
 import '../utils/audio_util.dart';
+import '../utils/response_text_sanitizer.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// Dịch vụ Xiaozhi事件类型
@@ -69,7 +70,14 @@ class XiaozhiService {
   bool _responseGateActive = false;
   final List<Uint8List> _gatedAudioFrames = <Uint8List>[];
   final List<String> _gatedTtsSentences = <String>[];
+  final List<String> _activeTtsParts = <String>[];
   Timer? _responseGateTimer;
+  int _cloudAudioFramesReceived = 0;
+  int _ttsFrameBaseline = 0;
+  int _ttsPlayedBaseline = 0;
+  String _lastUserStt = '';
+  bool _pendingMcpToolResponse = false;
+  bool _activeTtsIsToolResponse = false;
 
   /// Tạo một service riêng cho mỗi cấu hình/cuộc trò chuyện.
   /// Tránh giữ singleton cũ làm app tiếp tục dùng token hoặc Agent trước đó.
@@ -160,6 +168,11 @@ class XiaozhiService {
   }
 
   bool get isMcpBackendDetected => _mcpBackendDetected;
+  int get downlinkSampleRate => AudioUtil.downlinkSampleRate;
+  bool get cloudAudioPlayerReady => AudioUtil.isPlayerReady;
+  int get cloudAudioFramesReceived => _cloudAudioFramesReceived;
+  int get cloudAudioFramesPlayed => AudioUtil.cloudFramesPlayed;
+  String get cloudAudioLastError => AudioUtil.lastPlaybackError;
 
   /// Thêm事件监听器
   void addListener(XiaozhiServiceListener listener) {
@@ -508,6 +521,7 @@ class XiaozhiService {
 
       case XiaozhiEventType.binaryMessage:
         final audioData = Uint8List.fromList(event.data as List<int>);
+        _cloudAudioFramesReceived++;
         if (_responseGateActive) {
           // Giới hạn buffer để không tăng RAM vô hạn nếu server lỗi protocol.
           if (_gatedAudioFrames.length < 320) {
@@ -533,6 +547,7 @@ class XiaozhiService {
         _handleTextMessage(message);
       } else if (message is List<int>) {
         final audioData = Uint8List.fromList(message);
+        _cloudAudioFramesReceived++;
         if (_responseGateActive) {
           if (_gatedAudioFrames.length < 320) _gatedAudioFrames.add(audioData);
         } else if (!_suppressIncomingAudio) {
@@ -565,10 +580,19 @@ class XiaozhiService {
       // 根据Tin nhắn类型分发事件
       switch (type) {
         case 'hello':
-          // 处理服务器的hello响应
+          // Server có quyền thương lượng downlink sample-rate riêng (thường
+          // 16 kHz, đôi khi 24 kHz). Không được decode cứng 16 kHz vì sẽ làm
+          // cloud Female Voice méo hoặc im lặng trên một số backend.
+          final audioParams = jsonData['audio_params'];
+          if (audioParams is Map) {
+            final rawRate = audioParams['sample_rate'];
+            final rate = rawRate is num ? rawRate.toInt() : int.tryParse('$rawRate');
+            if (rate != null && rate > 0) {
+              unawaited(AudioUtil.configureDownlinkSampleRate(rate));
+            }
+          }
           if (_isVoiceCallActive && !_hasStartedCall) {
             _hasStartedCall = true;
-            // 发送自动说话Chế độTin nhắn
             startSpeaking();
           }
           break;
@@ -581,32 +605,89 @@ class XiaozhiService {
           break;
 
         case 'tts':
-          // TTSTin nhắn处理
-          final String state = jsonData['state'] ?? '';
-          final String text = jsonData['text'] ?? '';
+          final String state = (jsonData['state'] ?? '').toString();
+          final String text = (jsonData['text'] ?? '').toString();
 
-          if (state == 'stop' &&
-              _suppressedTtsStopCompleter != null &&
-              !_suppressedTtsStopCompleter!.isCompleted) {
-            _suppressedTtsStopCompleter!.complete();
+          if (state == 'start') {
+            _activeTtsParts.clear();
+            _activeTtsIsToolResponse = _pendingMcpToolResponse;
+            _pendingMcpToolResponse = false;
+            _ttsFrameBaseline = _cloudAudioFramesReceived;
+            _ttsPlayedBaseline = AudioUtil.cloudFramesPlayed;
+            if (!_suppressIncomingAudio) {
+              unawaited(AudioUtil.beginCloudTts());
+            }
           }
 
-          if (state == 'sentence_start' && text.isNotEmpty) {
+          if (state == 'sentence_start' && text.trim().isNotEmpty) {
             print('$TAG: 收到TTS句子: $text');
-            if (_responseGateActive) {
-              _gatedTtsSentences.add(text);
+            // Không tạo một bubble cho từng sentence_start. Xiaozhi thường gửi
+            // 2-5 mảnh cho một câu trả lời; ghép lại ở tts:stop sẽ gọn và loại
+            // được marker `% weather...` / Markdown `**`.
+            if (ResponseTextSanitizer.isInternalToolCommand(text)) {
+              _activeTtsIsToolResponse = true;
             } else {
+              _activeTtsParts.add(text);
+            }
+          }
+
+          if (state == 'stop') {
+            AudioUtil.endCloudTts();
+            final nativeFramesThisTurn =
+                _cloudAudioFramesReceived - _ttsFrameBaseline;
+            final playedFramesThisTurn =
+                AudioUtil.cloudFramesPlayed - _ttsPlayedBaseline;
+            if (!_suppressIncomingAudio &&
+                nativeFramesThisTurn <= 0 &&
+                _activeTtsParts.isNotEmpty) {
               _dispatchEvent(
-                XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, text),
+                XiaozhiServiceEvent(
+                  XiaozhiServiceEventType.error,
+                  'Xiaozhi đã trả văn bản nhưng không gửi frame audio TTS trong lượt này. Hãy kiểm tra cấu hình voice/Agent hoặc kết nối server.',
+                ),
               );
+            } else if (!_suppressIncomingAudio &&
+                nativeFramesThisTurn > 0 &&
+                playedFramesThisTurn <= 0) {
+              // WebSocket callback chỉ enqueue frame; đợi queue tiêu thụ một
+              // nhịp trước khi kết luận player im lặng để tránh báo lỗi giả.
+              unawaited(
+                _verifyCloudPlaybackAfterTts(
+                  nativeFramesThisTurn,
+                  _ttsPlayedBaseline,
+                ),
+              );
+            }
+            if (_suppressedTtsStopCompleter != null &&
+                !_suppressedTtsStopCompleter!.isCompleted) {
+              _suppressedTtsStopCompleter!.complete();
+            }
+
+            var fullText = ResponseTextSanitizer.joinSentences(_activeTtsParts);
+            if (_activeTtsIsToolResponse) {
+              fullText = ResponseTextSanitizer.limitSentences(fullText);
+            }
+            _activeTtsParts.clear();
+            _activeTtsIsToolResponse = false;
+            if (fullText.isNotEmpty) {
+              if (_responseGateActive) {
+                _gatedTtsSentences.add(fullText);
+              } else {
+                _dispatchEvent(
+                  XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, fullText),
+                );
+              }
             }
           }
           break;
 
         case 'stt':
-          // 处理Giọng nói识别结果
+          // 处理Giọng nói识别结果. Giữ nguyên câu STT mới nhất làm nguồn
+          // sự thật cho MCP tool arguments; không để LLM tự đổi địa điểm
+          // (ví dụ người dùng nói Đà Nẵng nhưng model truyền một nơi khác).
           final String text = jsonData['text'] ?? '';
           if (text.isNotEmpty) {
+            _lastUserStt = text.trim();
             print('$TAG: 收到Giọng nói识别结果: $text');
             // 先分发用户Tin nhắn事件
             _dispatchEvent(
@@ -642,6 +723,23 @@ class XiaozhiService {
     }
   }
 
+  Future<void> _verifyCloudPlaybackAfterTts(
+    int receivedFrames,
+    int playedBaseline,
+  ) async {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (_suppressIncomingAudio) return;
+    final played = AudioUtil.cloudFramesPlayed - playedBaseline;
+    if (played > 0) return;
+    final detail = AudioUtil.lastPlaybackError.trim();
+    _dispatchEvent(
+      XiaozhiServiceEvent(
+        XiaozhiServiceEventType.error,
+        'Đã nhận $receivedFrames frame Female Voice nhưng PCM player chưa phát được${detail.isEmpty ? "." : ": $detail"}',
+      ),
+    );
+  }
+
   Future<void> _handleMcpEnvelope(Map<String, dynamic> envelope) async {
     final payload = envelope['payload'];
     if (payload is! Map) return;
@@ -658,33 +756,79 @@ class XiaozhiService {
         'capabilities': {'tools': <String, dynamic>{}},
         'serverInfo': {
           'name': 'AI-LHHT-Android',
-          'version': '4.1.1',
+          'version': '4.1.2',
         },
       });
       return;
     }
 
     if (method == 'tools/list') {
+      // Khai báo tool cụ thể thay vì chỉ một generic lookup. Mô hình Xiaozhi
+      // sẽ dễ chọn đúng tool của THIẾT BỊ hơn các legacy command kiểu
+      // `% weather...`, nhờ đó dữ liệu/location do app kiểm soát và voice cuối
+      // vẫn là Female Voice từ cloud.
       _sendMcpResult(id, {
         'tools': [
-          {
-            'name': 'self.realtime.lookup',
-            'description': 'Tra cứu dữ liệu realtime và tiện ích Việt Nam trong ứng dụng AI-LHHT. '
-                'Hãy dùng tool này khi người dùng hỏi xổ số, thời tiết, AQI, tỷ giá, đổi tiền, '
-                'crypto, tin tức, mã vùng, nhà mạng, biển số, lịch âm, thể thao, giá vàng hoặc '
-                'các truy vấn realtime khác, hoặc thông tin Device-ID/Client-ID/MAC của thiết bị hiện tại. '
-                'Truyền nguyên câu hỏi của người dùng vào query.',
-            'inputSchema': {
-              'type': 'object',
-              'properties': {
-                'query': {
-                  'type': 'string',
-                  'description': 'Nguyên câu hỏi cần tra cứu.',
-                },
-              },
-              'required': ['query'],
-            },
-          },
+          _mcpTool(
+            'self.realtime.lookup',
+            'Tra cứu realtime tổng quát bằng công cụ của ứng dụng. Ưu tiên tool này thay vì legacy percent-command.',
+            {'query': 'Nguyên câu hỏi của người dùng.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.weather.lookup',
+            'Tra thời tiết bằng dữ liệu ứng dụng. PHẢI dùng tool này cho mọi câu hỏi thời tiết thay vì `% weather` legacy. Giữ NGUYÊN địa điểm người dùng nói; sau tool trả lời tối đa 2 câu, không Markdown, không bình luận thêm.',
+            {'location': 'Địa điểm nguyên văn người dùng yêu cầu, ví dụ Hà Nội, Đà Nẵng, Chánh Hiệp.'},
+            const ['location'],
+          ),
+          _mcpTool(
+            'self.air_quality.lookup',
+            'Tra AQI/chất lượng không khí bằng dữ liệu ứng dụng. Sau tool trả lời ngắn gọn, không Markdown, không thêm bình luận cá nhân.',
+            {'location': 'Địa điểm cần tra.'},
+            const ['location'],
+          ),
+          _mcpTool(
+            'self.vietnam.lottery',
+            'Tra kết quả xổ số Việt Nam bằng công cụ ứng dụng. Dùng dữ liệu tool, không tự đoán và không dùng legacy percent-command.',
+            {'query': 'Câu hỏi xổ số nguyên văn, gồm miền/tỉnh/ngày nếu có.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.finance.fx',
+            'Tra tỷ giá hoặc quy đổi tiền tệ bằng dữ liệu ứng dụng.',
+            {'query': 'Câu hỏi tỷ giá/quy đổi nguyên văn.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.market.crypto',
+            'Tra giá crypto bằng dữ liệu ứng dụng.',
+            {'query': 'Câu hỏi crypto nguyên văn.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.news.latest',
+            'Tra tin mới nhất bằng nguồn tin của ứng dụng. Tóm tắt ngắn gọn, không Markdown, không thêm câu trêu chọc vào dữ liệu.',
+            {'query': 'Chủ đề tin tức hoặc câu hỏi nguyên văn.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.vietnam.carrier',
+            'Tra nhà mạng/đầu số Việt Nam bằng database ứng dụng.',
+            {'query': 'Số điện thoại hoặc đầu số cần tra.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.vietnam.plate',
+            'Tra biển số xe Việt Nam bằng database ứng dụng.',
+            {'query': 'Biển số hoặc mã tỉnh cần tra.'},
+            const ['query'],
+          ),
+          _mcpTool(
+            'self.gold.lookup',
+            'Tra giá vàng qua provider của ứng dụng nếu đang khả dụng.',
+            {'query': 'Câu hỏi giá vàng nguyên văn.'},
+            const ['query'],
+          ),
         ],
       });
       return;
@@ -697,22 +841,27 @@ class XiaozhiService {
         return;
       }
       final name = (params['name'] ?? '').toString();
-      if (name != 'self.realtime.lookup') {
+      final arguments = params['arguments'];
+      final args = arguments is Map ? Map<String, dynamic>.from(arguments) : <String, dynamic>{};
+      final query = _queryForMcpTool(name, args);
+      if (query == null) {
         _sendMcpError(id, -32601, 'Unknown tool: $name');
         return;
       }
-      final arguments = params['arguments'];
-      final query = arguments is Map ? (arguments['query'] ?? '').toString().trim() : '';
-      if (query.isEmpty) {
-        _sendMcpError(id, -32602, 'query is required');
+      if (query.trim().isEmpty) {
+        _sendMcpError(id, -32602, 'Tool arguments are incomplete');
         return;
       }
       try {
+        _pendingMcpToolResponse = true;
         final handler = _realtimeMcpHandler;
         if (handler == null) {
           throw StateError('Realtime tool handler is not registered.');
         }
-        final resultText = (await handler(query)).trim();
+        final resultText = ResponseTextSanitizer.clean(
+          (await handler(query)).trim(),
+          compact: true,
+        );
         _sendMcpResult(id, {
           'content': [
             {'type': 'text', 'text': resultText.isEmpty ? 'Không có dữ liệu.' : resultText},
@@ -732,6 +881,60 @@ class XiaozhiService {
 
     if (id != null) {
       _sendMcpError(id, -32601, 'Method not implemented: $method');
+    }
+  }
+
+  Map<String, dynamic> _mcpTool(
+    String name,
+    String description,
+    Map<String, String> properties,
+    List<String> required,
+  ) {
+    return {
+      'name': name,
+      'description': description,
+      'inputSchema': {
+        'type': 'object',
+        'properties': properties.map(
+          (key, value) => MapEntry(key, {'type': 'string', 'description': value}),
+        ),
+        'required': required,
+      },
+    };
+  }
+
+  String? _queryForMcpTool(String name, Map<String, dynamic> args) {
+    String value(String key) => (args[key] ?? '').toString().trim();
+    final spoken = _lastUserStt.trim();
+
+    // Với tool phát sinh trực tiếp từ câu nói hiện tại, ưu tiên transcript gốc
+    // thay vì tham số LLM tự suy diễn. Đây là lớp chống "query drift" cho địa
+    // điểm, mã tiền, đầu số... và đặc biệt là weather.
+    String preferSpoken(String fallback) => spoken.isNotEmpty ? spoken : fallback;
+
+    switch (name) {
+      case 'self.realtime.lookup':
+        return preferSpoken(value('query'));
+      case 'self.weather.lookup':
+        return preferSpoken('thời tiết ở ${value('location')} hôm nay');
+      case 'self.air_quality.lookup':
+        return preferSpoken('chất lượng không khí ở ${value('location')} hiện tại');
+      case 'self.vietnam.lottery':
+        return preferSpoken(value('query'));
+      case 'self.finance.fx':
+        return preferSpoken(value('query'));
+      case 'self.market.crypto':
+        return preferSpoken(value('query'));
+      case 'self.news.latest':
+        return preferSpoken(value('query').isEmpty ? 'tin tức mới nhất hôm nay' : value('query'));
+      case 'self.vietnam.carrier':
+        return preferSpoken('nhà mạng ${value('query')}');
+      case 'self.vietnam.plate':
+        return preferSpoken('biển số ${value('query')}');
+      case 'self.gold.lookup':
+        return preferSpoken(value('query').isEmpty ? 'giá vàng hôm nay' : value('query'));
+      default:
+        return null;
     }
   }
 
@@ -816,12 +1019,11 @@ class XiaozhiService {
     _gatedTtsSentences.clear();
     _gatedAudioFrames.clear();
 
-    for (final text in sentences) {
-      if (text.trim().isNotEmpty) {
-        _dispatchEvent(
-          XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, text),
-        );
-      }
+    final fullText = ResponseTextSanitizer.joinSentences(sentences);
+    if (fullText.isNotEmpty) {
+      _dispatchEvent(
+        XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, fullText),
+      );
     }
     if (!_suppressIncomingAudio) {
       for (final frame in audioFrames) {
@@ -838,6 +1040,7 @@ class XiaozhiService {
     _responseGateActive = false;
     _gatedAudioFrames.clear();
     _gatedTtsSentences.clear();
+    _activeTtsParts.clear();
   }
 
   /// 中断音频播放

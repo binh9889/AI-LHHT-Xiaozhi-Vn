@@ -7,6 +7,7 @@ import 'package:ai_assistant/services/native_speech_service.dart';
 import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
 import 'package:ai_assistant/services/unified_speech_output_service.dart';
 import 'package:ai_assistant/services/voice_output_preferences.dart';
+import 'package:ai_assistant/utils/audio_util.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
   const DiagnosticsScreen({super.key});
@@ -22,6 +23,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   String _nativeAsrStatus = 'Chưa kiểm tra';
   String _toolStatus = 'Chưa kiểm tra';
   String _ttsStatus = 'Chưa kiểm tra';
+  String _cloudAudioStatus = 'Chưa có phiên TTS';
   bool _testingTools = false;
 
   @override
@@ -128,6 +130,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       setState(() {
         _xiaozhiStatus = service.isConnected ? 'Đã kết nối' : 'Kết nối chưa sẵn sàng';
         _latency = '${elapsed} ms';
+        final errorSuffix = service.cloudAudioLastError.isEmpty
+            ? ''
+            : ' • lỗi: ${service.cloudAudioLastError}';
+        _cloudAudioStatus =
+            'Downlink ${service.downlinkSampleRate} Hz • PCM player ${service.cloudAudioPlayerReady ? "READY" : "NOT READY"} • frame đã phát ${service.cloudAudioFramesPlayed}$errorSuffix';
       });
     } on TimeoutException {
       if (mounted) setState(() => _xiaozhiStatus = 'Hết thời gian chờ');
@@ -159,7 +166,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 _PipelineItem('VAD', 'Điều khiển bởi phiên Xiaozhi', Icons.multiline_chart_rounded, provider.xiaozhiConfigs.isNotEmpty),
                 _PipelineItem('ASR', 'Native locale-locked + Xiaozhi fallback', Icons.record_voice_over_rounded, true),
                 _PipelineItem('AGENT', 'Xiaozhi / Dify / MiniMax', Icons.smart_toy_outlined, provider.xiaozhiConfigs.isNotEmpty || provider.difyConfigs.isNotEmpty || provider.minimaxConfigs.isNotEmpty),
-                _PipelineItem('TTS', 'Xiaozhi Native Voice v4.1.1 • cloud TTS ưu tiên', Icons.volume_up_rounded, true),
+                _PipelineItem('TTS', 'Xiaozhi Native Voice v4.1.2 • cloud TTS ưu tiên', Icons.volume_up_rounded, true),
               ],
             ),
             const SizedBox(height: 20),
@@ -179,6 +186,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               title: 'Xiaozhi Native Voice / TTS',
               subtitle: _ttsStatus,
               trailing: TextButton(onPressed: _testStableTts, child: const Text('Kiểm tra')),
+            ),
+            _StatusTile(
+              icon: Icons.graphic_eq_rounded,
+              title: 'Cloud audio decoder/player',
+              subtitle: _cloudAudioStatus,
+              ok: AudioUtil.isPlayerReady,
             ),
             _StatusTile(
               icon: Icons.travel_explore_rounded,
@@ -231,7 +244,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Mẹo v4.1: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
+                  'Mẹo v4.1.2: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
                   style: TextStyle(height: 1.45),
                 ),
               ),

@@ -1,13 +1,13 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Cấu hình đầu ra giọng nói v4.1.1.
+/// Cấu hình đầu ra giọng nói v4.1.2.
 ///
 /// Mặc định LUÔN ưu tiên audio TTS do Xiaozhi cloud gửi về. Đây chính là
 /// giọng đã chọn cho Agent trên xiaozhi.me (ví dụ "Giọng nữ / Female Voice").
 /// TTS Android chỉ còn là fallback cho phiên dịch hoặc khi người dùng chủ động
 /// bật chế độ local; nó không được phép âm thầm thay giọng của Agent.
 class VoiceOutputPreferences {
-  static const String _nativeXiaozhiKey = 'voice_output_xiaozhi_native_v411';
+  static const String _nativeXiaozhiKey = 'voice_output_xiaozhi_native_v412';
   static const String _unifiedVoiceKey = 'voice_output_unified_local_v41';
   static const String _preferredVoicePrefix = 'voice_output_preferred_voice_';
 

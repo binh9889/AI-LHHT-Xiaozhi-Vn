@@ -1,9 +1,9 @@
-# Build AI-LHHT v4.1.0
+# Build AI-LHHT v4.1.2
 
 ## Version
 
 ```text
-4.1.0+410
+4.1.2+412
 ```
 
 ## Kiểm tra tĩnh
@@ -26,14 +26,16 @@ flutter test \
   test/realtime_tool_service_test.dart \
   test/tool_registry_test.dart \
   test/tool_intent_router_test.dart \
+  test/vietnamese_transcript_normalizer_test.dart \
+  test/response_text_sanitizer_test.dart \
   test/realtime_tool_engine_local_test.dart
-flutter build apk --debug --build-name=4.0.1 --build-number=401
+flutter build apk --debug --build-name=4.1.2 --build-number=412
 ```
 
 APK mục tiêu:
 
 ```text
-AI-LHHT-v4.1.0-Realtime-Tools-Pro-VI.apk
+AI-LHHT-v4.1.2-Native-Voice-Weather-Clean-Pro-VI.apk
 ```
 
 GitHub Actions `.github/workflows/build-vi-apk.yml` chạy tự động khi push lên `develop-v4`.

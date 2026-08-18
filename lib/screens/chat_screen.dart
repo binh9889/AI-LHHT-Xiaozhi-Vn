@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ai_assistant/utils/vietnamese_transcript_normalizer.dart';
+import 'package:ai_assistant/utils/response_text_sanitizer.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:math';
@@ -49,7 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _connectionCheckTimer; // Thêm定时器检查连接状态
   Timer? _autoReconnectTimer; // 自动重连定时器
 
-  // v4.1.1: mặc định giữ nguyên audio TTS do Xiaozhi cloud gửi về. Đây là
+  // v4.1.2: mặc định giữ nguyên audio TTS do Xiaozhi cloud gửi về. Đây là
   // giọng Agent đã chọn trên xiaozhi.me (ví dụ Female Voice). Android TTS chỉ
   // là fallback/phiên dịch và không được âm thầm thay giọng của Agent.
   final UnifiedSpeechOutputService _speechOutput =
@@ -167,9 +168,18 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _initializeVoiceOutput() async {
     final preferNative = await _voiceOutputPreferences.useXiaozhiNativeVoice();
     final wantsUnified = await _voiceOutputPreferences.useUnifiedVoice();
-    final ttsReady = await _speechOutput.initialize(locale: 'vi-VN');
+
     _xiaozhiNativeVoice = preferNative;
-    _unifiedVoiceOutput = !preferNative && wantsUnified && ttsReady;
+    if (preferNative) {
+      // Quan trọng: khi dùng Female Voice của Xiaozhi, KHÔNG khởi tạo FlutterTts
+      // ở nền. Một TTS Android dù chưa speak vẫn có thể chạm audio engine/focus
+      // trên một số ROM. Native cloud voice chỉ cần WebSocket Opus + PCM player.
+      _unifiedVoiceOutput = false;
+    } else {
+      final ttsReady = await _speechOutput.initialize(locale: 'vi-VN');
+      _unifiedVoiceOutput = wantsUnified && ttsReady;
+    }
+
     // false = phát nguyên binary Opus TTS do Xiaozhi server gửi về, giữ đúng
     // Female Voice/voice profile của Agent trên xiaozhi.me.
     _xiaozhiService?.setSuppressIncomingAudio(_unifiedVoiceOutput);
@@ -278,12 +288,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final toolResult = await _toolEngine.handle(normalized);
     if (toolResult != null) {
-      return toolResult.success
-          ? toolResult.summary
-          : (toolResult.userMessage ?? toolResult.summary);
+      return ResponseTextSanitizer.clean(
+        toolResult.success
+            ? toolResult.summary
+            : (toolResult.userMessage ?? toolResult.summary),
+        compact: true,
+      );
     }
     final legacy = await _realtimeTools.handle(normalized, forceMusic: false);
-    if (legacy != null) return legacy.text;
+    if (legacy != null) {
+      return ResponseTextSanitizer.clean(legacy.text, compact: true);
+    }
     return 'Ứng dụng chưa có công cụ phù hợp cho truy vấn này.';
   }
 
@@ -297,7 +312,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (event.type == XiaozhiServiceEventType.textMessage) {
-      final content = (event.data ?? '').toString().trim();
+      final content = ResponseTextSanitizer.clean(
+        (event.data ?? '').toString(),
+        compact: true,
+      );
       if (content.isEmpty) return;
 
       // Trong chế độ phiên dịch, câu trả lời Agent bình thường phải bị chặn.
@@ -326,8 +344,11 @@ class _ChatScreenState extends State<ChatScreen> {
         event.type == XiaozhiServiceEventType.disconnected) {
       setState(() {});
     } else if (event.type == XiaozhiServiceEventType.error) {
-      if (_liveInterpreterMode && mounted) {
-        _showCustomSnackbar('Lỗi phiên dịch/giọng nói: ${event.data}');
+      if (mounted) {
+        final prefix = _liveInterpreterMode
+            ? 'Lỗi phiên dịch/giọng nói'
+            : 'Lỗi Xiaozhi/âm thanh';
+        _showCustomSnackbar('$prefix: ${event.data}');
       }
     }
   }
@@ -401,9 +422,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingOnlineMusicSearch = false;
       _xiaozhiService?.discardResponseGate();
       await _xiaozhiService?.interruptResponse();
-      final message = toolResult.success
-          ? toolResult.summary
-          : (toolResult.userMessage ?? toolResult.summary);
+      final message = ResponseTextSanitizer.clean(
+        toolResult.success
+            ? toolResult.summary
+            : (toolResult.userMessage ?? toolResult.summary),
+        compact: true,
+      );
       await conversationProvider.addMessage(
         conversationId: widget.conversation.id,
         role: MessageRole.assistant,

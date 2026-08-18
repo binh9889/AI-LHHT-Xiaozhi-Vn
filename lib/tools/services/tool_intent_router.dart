@@ -116,16 +116,55 @@ class ToolIntentRouter {
   }
 
   String _extractLocation(String original) {
-    var value = original;
-    for (final phrase in <String>[
-      'thời tiết', 'nhiệt độ', 'hôm nay', 'bây giờ', 'hiện tại',
-      'chất lượng không khí', 'aqi', 'pm2.5', 'pm 2.5', 'pm10',
-      'có mưa không', 'trời có mưa không', 'bao nhiêu độ',
-    ]) {
-      value = value.replaceAll(RegExp(RegExp.escape(phrase), caseSensitive: false), ' ');
+    var value = original.trim().replaceAll(RegExp(r'[?!,.]+$'), '');
+
+    // Ưu tiên phần người dùng nói rõ sau "ở/tại":
+    // "thời tiết ở Chánh Hiệp hôm nay" -> "Chánh Hiệp".
+    final explicit = RegExp(
+      r'(?:^|\s)(?:ở|tại)\s+(.+)$',
+      caseSensitive: false,
+      unicode: true,
+    ).firstMatch(value);
+    if (explicit != null && (explicit.group(1) ?? '').trim().isNotEmpty) {
+      value = explicit.group(1)!.trim();
+    } else {
+      value = value.replaceAll(
+        RegExp(
+          r'(thời\s*tiết|nhiệt\s*độ|chất\s*lượng\s*không\s*khí|aqi|pm\s*2[.,]?5|pm10)',
+          caseSensitive: false,
+          unicode: true,
+        ),
+        ' ',
+      );
     }
-    value = value.replaceAll(RegExp(r'\b(ở|tại|của|cho|giúp|tôi|mình)\b', caseSensitive: false), ' ');
-    value = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    // Chỉ bỏ phần hỏi/thời gian ở CUỐI câu, không xóa từ nằm giữa tên địa danh.
+    value = value.replaceAll(
+      RegExp(
+        r'\s+(?:hôm\s*nay|bây\s*giờ|hiện\s*tại|lúc\s*này|thế\s*nào|ra\s*sao|bao\s*nhiêu\s*độ|có\s*mưa\s*không|cho\s*tôi|giúp\s*tôi|nhé|với|đi)\s*$',
+        caseSensitive: false,
+        unicode: true,
+      ),
+      '',
+    );
+    value = value
+        .replaceAll(RegExp(r'^\s*(?:ở|tại|cho|giúp|xem|coi)\s+', caseSensitive: false, unicode: true), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    const aliases = <String, String>{
+      'sài gòn': 'Hồ Chí Minh',
+      'saigon': 'Hồ Chí Minh',
+      'tp hcm': 'Hồ Chí Minh',
+      'tphcm': 'Hồ Chí Minh',
+      'thành phố hồ chí minh': 'Hồ Chí Minh',
+      'hn': 'Hà Nội',
+    };
+    final alias = aliases[value.toLowerCase()];
+    if (alias != null) value = alias;
+
+    // Nếu người dùng không nói địa điểm, giữ mặc định cũ. Nhưng khi họ đã
+    // nói tên nơi, tuyệt đối không tự thay bằng một địa điểm khác ở router.
     return value.isEmpty ? 'Hà Nội' : value;
   }
 

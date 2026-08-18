@@ -6,6 +6,7 @@ import 'package:ai_assistant/models/message.dart';
 import 'package:provider/provider.dart';
 import 'package:ai_assistant/providers/conversation_provider.dart';
 import 'package:ai_assistant/models/conversation.dart';
+import 'package:ai_assistant/utils/response_text_sanitizer.dart';
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -23,6 +24,12 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.role == MessageRole.user;
     final isSystem = message.role == MessageRole.system;
+    final displayContent = isUser || isSystem
+        ? message.content
+        : ResponseTextSanitizer.clean(message.content);
+    if (!message.isImage && !isUser && !isSystem && displayContent.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     // 系统Tin nhắn使用不同的展示方式
     if (isSystem) {
@@ -67,7 +74,7 @@ class MessageBubble extends StatelessWidget {
                           : message.isImage
                           ? _buildImageContent(context)
                           : Text(
-                            message.content,
+                            displayContent,
                             style: TextStyle(
                               color: isUser ? Colors.white : Colors.black87,
                               fontSize: 15,

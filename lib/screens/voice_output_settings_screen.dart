@@ -83,7 +83,7 @@ class _VoiceOutputSettingsScreenState extends State<VoiceOutputSettingsScreen> {
                     secondary: const Icon(Icons.phone_android_rounded),
                     title: const Text('Dùng TTS Android thay thế'),
                     subtitle: const Text(
-                      'Chỉ bật khi bạn thực sự muốn thay giọng Xiaozhi. Chế độ này không được bật mặc định ở v4.1.1.',
+                      'Chỉ bật khi bạn thực sự muốn thay giọng Xiaozhi. Chế độ này không được bật mặc định ở v4.1.2.',
                     ),
                   ),
                 ),
@@ -97,7 +97,7 @@ class _VoiceOutputSettingsScreenState extends State<VoiceOutputSettingsScreen> {
                     title: Text(_nativeXiaozhi ? 'Xiaozhi Native Voice đang được khóa' : 'TTS Android ${_ttsReady ? 'sẵn sàng' : 'chưa sẵn sàng'}'),
                     subtitle: Text(
                       _nativeXiaozhi
-                          ? 'Agent và các kết quả realtime qua MCP sẽ do Xiaozhi server tổng hợp và phát bằng voice profile của Agent.'
+                          ? 'Agent và kết quả realtime qua MCP sẽ do Xiaozhi server tổng hợp và phát bằng voice profile của Agent. Nếu có chữ nhưng không có tiếng, mở Chẩn đoán hệ thống để xem downlink/sample-rate và trạng thái PCM player.'
                           : (_ttsReady ? 'Voice local: ${_speech.lastVoice.isEmpty ? 'theo hệ thống' : _speech.lastVoice}' : 'Cần cài dữ liệu TTS trên Android.'),
                     ),
                   ),

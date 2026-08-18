@@ -93,7 +93,7 @@ class SettingsScreen extends StatelessWidget {
               icon: Icons.record_voice_over_rounded,
               title: 'Giọng Xiaozhi chính thức',
               subtitle: 'Ưu tiên Female Voice/voice profile từ Xiaozhi • không tự đổi sang TTS Android',
-              badge: 'Native Voice v4.1.1',
+              badge: 'Native Voice v4.1.2',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const VoiceOutputSettingsScreen()),
@@ -125,7 +125,7 @@ class SettingsScreen extends StatelessWidget {
               child: ListTile(
                 leading: Icon(Icons.verified_outlined),
                 title: Text('AI-LHHT v4.1 Voice Stability Pro', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('4.1.1+411 • Xiaozhi Native Voice + MCP Tools + 21 Realtime Tools + Interpreter + Music'),
+                subtitle: Text('4.1.2+412 • Xiaozhi Native Voice + Weather Clean + MCP Tools + 21 Realtime Tools + Interpreter + Music'),
               ),
             ),
           ],

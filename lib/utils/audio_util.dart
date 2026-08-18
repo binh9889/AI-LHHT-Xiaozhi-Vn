@@ -16,6 +16,7 @@ import 'pcm_frame_buffer.dart';
 class AudioUtil {
   static const String TAG = "AudioUtil";
   static const int SAMPLE_RATE = 16000;
+  static const int OUTPUT_SAMPLE_RATE = 16000;
   static const int CHANNELS = 1;
   static const int FRAME_DURATION = 60; // 毫秒
 
@@ -25,6 +26,12 @@ class AudioUtil {
   static bool _isPlayerInitialized = false;
   static bool _isRecording = false;
   static bool _isPlaying = false;
+  static int _downlinkSampleRate = SAMPLE_RATE;
+  static int _playbackGeneration = 0;
+  static int _cloudFramesPlayed = 0;
+  static String _lastPlaybackError = '';
+  static Future<void> _playbackTail = Future<void>.value();
+  static Future<void>? _playerInitFuture;
   static final StreamController<Uint8List> _audioStreamController =
       StreamController<Uint8List>.broadcast();
   static String? _tempFilePath;
@@ -40,10 +47,30 @@ class AudioUtil {
     channels: CHANNELS,
     application: Application.voip,
   );
-  static final _decoder = SimpleOpusDecoder(
+  static SimpleOpusDecoder _decoder = SimpleOpusDecoder(
     sampleRate: SAMPLE_RATE,
     channels: CHANNELS,
   );
+
+  static int get downlinkSampleRate => _downlinkSampleRate;
+  static bool get isPlayerReady => _isPlayerInitialized && _pcmPlayer != null;
+  static int get cloudFramesPlayed => _cloudFramesPlayed;
+  static String get lastPlaybackError => _lastPlaybackError;
+
+  /// Xiaozhi server có thể trả downlink 16 kHz hoặc 24 kHz trong server hello.
+  /// Decoder phải bám đúng sample-rate đã thương lượng; sau decode app resample
+  /// về OUTPUT_SAMPLE_RATE cho PCM player hiện tại.
+  static Future<void> configureDownlinkSampleRate(int sampleRate) async {
+    const supported = <int>{8000, 12000, 16000, 24000, 48000};
+    final effective = supported.contains(sampleRate) ? sampleRate : SAMPLE_RATE;
+    if (_downlinkSampleRate == effective) return;
+    _downlinkSampleRate = effective;
+    _decoder = SimpleOpusDecoder(sampleRate: effective, channels: CHANNELS);
+    // KHÔNG stop/re-create PCM player tại server hello. Player luôn nhận PCM
+    // 16 kHz sau bước resample; việc dừng player đúng lúc hello có thể chạy
+    // đua với `tts:start` và làm mất toàn bộ câu Female Voice đầu tiên.
+    print('$TAG: Downlink Opus sample rate = $effective Hz; playback output = $OUTPUT_SAMPLE_RATE Hz');
+  }
 
   // FlutterPcmPlayer实例
   static FlutterPcmPlayer? _pcmPlayer;
@@ -133,71 +160,152 @@ class AudioUtil {
     print('$TAG: 录音器初始化Thành công');
   }
 
-  /// 初始化音频播放器
+  /// 初始化音频播放器. Có guard để nhiều Opus frame đến cùng lúc không
+  /// cùng re-create player và tự stop lẫn nhau.
   static Future<void> initPlayer() async {
-    // 确保任何旧播放器被释放
-    await stopPlaying();
+    if (_isPlayerInitialized && _pcmPlayer != null) return;
+    final inFlight = _playerInitFuture;
+    if (inFlight != null) return inFlight;
 
+    final completer = Completer<void>();
+    _playerInitFuture = completer.future;
     try {
-      print('$TAG: 使用简单方式初始化PCM播放器');
+      print('$TAG: Khởi tạo PCM player cho Xiaozhi cloud TTS');
+      final session = await AudioSession.instance;
+      try {
+        await session.setActive(true);
+      } catch (e) {
+        print('$TAG: Không lấy được audio focus trước playback: $e');
+      }
 
-      // 创建新的播放器实例 - 完全按照官方示例的简单方式
-      _pcmPlayer = FlutterPcmPlayer();
-      await _pcmPlayer!.initialize();
-      await _pcmPlayer!.play();
-
-      _isPlayerInitialized = true;
-      print('$TAG: PCM播放器初始化Thành công');
-    } catch (e) {
-      print('$TAG: PCM播放器初始化Thất bại: $e');
+      final old = _pcmPlayer;
+      _pcmPlayer = null;
       _isPlayerInitialized = false;
+      if (old != null) {
+        try {
+          await old.stop();
+        } catch (_) {}
+      }
+
+      final player = FlutterPcmPlayer();
+      await player.initialize();
+      await player.play();
+      _pcmPlayer = player;
+      _isPlayerInitialized = true;
+      _isPlaying = true;
+      print('$TAG: PCM player sẵn sàng');
+      completer.complete();
+    } catch (e, st) {
+      print('$TAG: PCM player khởi tạo thất bại: $e');
+      print(st);
+      _isPlayerInitialized = false;
+      _isPlaying = false;
+      if (!completer.isCompleted) completer.completeError(e, st);
+      rethrow;
+    } finally {
+      _playerInitFuture = null;
     }
   }
 
-  /// 播放Opus音频数据
-  static Future<void> playOpusData(Uint8List opusData) async {
+  /// Chuẩn bị trước khi server gửi các binary Opus frame. Làm ở `tts:start`
+  /// để frame đầu tiên không bị mất vì khởi tạo player quá muộn.
+  static Future<void> beginCloudTts() async {
     try {
-      // 如果播放器未初始化，先初始化
-      if (!_isPlayerInitialized || _pcmPlayer == null) {
-        await initPlayer();
-      }
+      await initPlayer();
+      _isPlaying = true;
+    } catch (e) {
+      print('$TAG: Không chuẩn bị được cloud TTS: $e');
+    }
+  }
 
-      // 解码Opus数据
-      final Int16List pcmData = _decoder.decode(input: opusData);
+  /// WebSocket callbacks đến rất nhanh và không await nhau. Mọi frame phải đi
+  /// qua một hàng đợi duy nhất, nếu không nhiều frame đầu có thể đồng thời gọi
+  /// initPlayer() rồi stop/re-create player làm cả câu bị im lặng.
+  static Future<void> playOpusData(Uint8List opusData) {
+    if (opusData.isEmpty) return Future<void>.value();
+    final generation = _playbackGeneration;
+    _playbackTail = _playbackTail.then((_) async {
+      if (generation != _playbackGeneration) return;
+      await _playOpusFrame(opusData);
+    }).catchError((Object e, StackTrace st) {
+      print('$TAG: Hàng đợi playback lỗi: $e');
+      print(st);
+    });
+    return _playbackTail;
+  }
 
-      // 准备PCM数据（按照示例直接方式）
+  static Future<void> _playOpusFrame(Uint8List opusData) async {
+    try {
+      await initPlayer();
+      final Int16List decoded = _decoder.decode(input: opusData);
+      final Int16List pcmData = _downlinkSampleRate == OUTPUT_SAMPLE_RATE
+          ? decoded
+          : _resampleLinear(decoded, _downlinkSampleRate, OUTPUT_SAMPLE_RATE);
+
       final Uint8List pcmBytes = Uint8List(pcmData.length * 2);
-      ByteData bytes = ByteData.view(pcmBytes.buffer);
-
-      // 使用小端字节序
+      final bytes = ByteData.view(pcmBytes.buffer);
       for (int i = 0; i < pcmData.length; i++) {
         bytes.setInt16(i * 2, pcmData[i], Endian.little);
       }
-
-      // 直接发送到播放器
-      if (_pcmPlayer != null) {
-        await _pcmPlayer!.feed(pcmBytes);
+      final player = _pcmPlayer;
+      if (player != null) {
+        await player.feed(pcmBytes);
+        _cloudFramesPlayed++;
+        _lastPlaybackError = '';
+        _isPlaying = true;
+      } else {
+        _lastPlaybackError = 'PCM player null sau init';
       }
-    } catch (e) {
-      print('$TAG: 播放Thất bại: $e');
-
-      // 简单đặt lại并重新初始化
-      await stopPlaying();
-      await initPlayer();
+    } catch (e, st) {
+      _lastPlaybackError = '$e';
+      print('$TAG: Phát Opus cloud thất bại: $e');
+      print(st);
+      // Không stop/re-init ngay trong cùng frame vì sẽ phá cả queue. Frame sau
+      // sẽ tự init lại nếu player thực sự không còn dùng được.
+      _isPlayerInitialized = false;
+      _isPlaying = false;
     }
+  }
+
+  static Int16List _resampleLinear(Int16List input, int fromRate, int toRate) {
+    if (input.isEmpty || fromRate <= 0 || toRate <= 0 || fromRate == toRate) {
+      return input;
+    }
+    final outLength = ((input.length * toRate) / fromRate).round();
+    if (outLength <= 1) return Int16List.fromList(input);
+    final output = Int16List(outLength);
+    final scale = fromRate / toRate;
+    for (var i = 0; i < outLength; i++) {
+      final sourcePos = i * scale;
+      final left = sourcePos.floor().clamp(0, input.length - 1).toInt();
+      final right = (left + 1).clamp(0, input.length - 1).toInt();
+      final frac = sourcePos - left;
+      final value = input[left] + (input[right] - input[left]) * frac;
+      output[i] = value.round().clamp(-32768, 32767).toInt();
+    }
+    return output;
+  }
+
+  /// `tts:stop` chỉ đánh dấu hết câu. Không stop player lập tức vì vẫn có thể
+  /// còn PCM đã feed trong native buffer.
+  static void endCloudTts() {
+    _isPlaying = false;
   }
 
   /// 停止播放
   static Future<void> stopPlaying() async {
-    if (_pcmPlayer != null) {
+    _playbackGeneration++;
+    final player = _pcmPlayer;
+    _pcmPlayer = null;
+    _isPlayerInitialized = false;
+    _isPlaying = false;
+    if (player != null) {
       try {
-        await _pcmPlayer!.stop();
-        print('$TAG: 播放器已停止');
+        await player.stop();
+        print('$TAG: Player đã dừng');
       } catch (e) {
-        print('$TAG: 停止播放Thất bại: $e');
+        print('$TAG: Dừng player thất bại: $e');
       }
-      _pcmPlayer = null;
-      _isPlayerInitialized = false;
     }
   }
 

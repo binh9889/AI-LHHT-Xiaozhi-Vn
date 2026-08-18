@@ -109,7 +109,7 @@ class PublicDataProviders {
         headers: <String, String>{
           'Accept': 'application/json',
           if (config.bridgeToken.trim().isNotEmpty) 'Authorization': 'Bearer ${config.bridgeToken.trim()}',
-          'User-Agent': 'AI-LHHT/4.0 Android',
+          'User-Agent': 'AI-LHHT/4.1.2 Android',
         },
       ).timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) {
@@ -531,7 +531,7 @@ class PublicDataProviders {
     return ToolResult(
       toolId: 'weather',
       title: 'Thời tiết ${geo.$1}',
-      summary: '${geo.$1} hiện ${temp ?? '?'}°C, $condition, độ ẩm ${humidity ?? '?'}%, khả năng mưa cao nhất hôm nay ${rainChance ?? '?'}%.',
+      summary: 'Thời tiết tại ${geo.$1}: ${temp ?? '?'}°C, cảm giác ${feels ?? '?'}°C, $condition. Độ ẩm ${humidity ?? '?'}%, gió ${wind ?? '?'} km/h, khả năng mưa ${rainChance ?? '?'}%.',
       source: 'Open-Meteo',
       timestamp: DateTime.now(),
       success: true,
@@ -641,23 +641,105 @@ class PublicDataProviders {
   }
 
   Future<(String, double, double)?> _geocode(String location) async {
+    final requested = location.trim().isEmpty ? 'Hà Nội' : location.trim();
     final uri = Uri.https('geocoding-api.open-meteo.com', '/v1/search', {
-      'name': location.trim().isEmpty ? 'Hà Nội' : location.trim(),
-      'count': '1',
+      'name': requested,
+      'count': '10',
       'language': 'vi',
       'format': 'json',
     });
     final response = await _get(uri, timeout: const Duration(seconds: 6));
     if (response.statusCode != 200) return null;
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final results = data['results'];
-    if (results is! List || results.isEmpty || results.first is! Map) return null;
-    final item = Map<String, dynamic>.from(results.first as Map);
-    final lat = (item['latitude'] as num?)?.toDouble();
-    final lon = (item['longitude'] as num?)?.toDouble();
-    if (lat == null || lon == null) return null;
-    final name = '${item['name'] ?? location}';
-    return (name, lat, lon);
+    final rawResults = data['results'];
+    if (rawResults is! List || rawResults.isEmpty) return null;
+
+    final results = rawResults
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .where((item) => item['latitude'] is num && item['longitude'] is num)
+        .toList();
+    if (results.isEmpty) return null;
+
+    final query = requested.toLowerCase().trim();
+    final foldedQuery = _foldVietnamese(query);
+    double score(Map<String, dynamic> item) {
+      final name = '${item['name'] ?? ''}'.toLowerCase().trim();
+      final foldedName = _foldVietnamese(name);
+      final countryCode = '${item['country_code'] ?? ''}'.toUpperCase();
+      final admins = <String>[
+        '${item['admin1'] ?? ''}',
+        '${item['admin2'] ?? ''}',
+        '${item['admin3'] ?? ''}',
+        '${item['admin4'] ?? ''}',
+      ].where((v) => v.trim().isNotEmpty).join(' ').toLowerCase();
+      final foldedAdmins = _foldVietnamese(admins);
+
+      var value = 0.0;
+      if (name == query || foldedName == foldedQuery) value += 150;
+      if (name.startsWith(query) || query.startsWith(name) ||
+          foldedName.startsWith(foldedQuery) || foldedQuery.startsWith(foldedName)) {
+        value += 70;
+      }
+      if (admins.contains(query) || foldedAdmins.contains(foldedQuery)) value += 55;
+      // Ứng dụng là bản Việt Nam: khi hai địa danh trùng tên, ưu tiên kết quả
+      // ở Việt Nam nhưng KHÔNG lọc cứng để vẫn tra được Tokyo/London/...
+      if (countryCode == 'VN') value += 35;
+      final population = item['population'];
+      if (population is num && population > 0) {
+        value += (population.toDouble().clamp(0, 10000000) / 10000000) * 8;
+      }
+      return value;
+    }
+
+    results.sort((a, b) => score(b).compareTo(score(a)));
+    final item = results.first;
+    final bestScore = score(item);
+    // Không được "đoán đại" địa điểm. Nếu tên người dùng nói không khớp tên
+    // hoặc cấp hành chính của bất kỳ kết quả nào, trả LOCATION_NOT_FOUND để
+    // người dùng nói rõ hơn thay vì âm thầm đổi sang một nơi khác.
+    if (bestScore < 70) return null;
+    final lat = (item['latitude'] as num).toDouble();
+    final lon = (item['longitude'] as num).toDouble();
+
+    final labels = <String>[];
+    void addLabel(dynamic raw) {
+      final value = '${raw ?? ''}'.trim();
+      if (value.isEmpty) return;
+      if (labels.any((e) => e.toLowerCase() == value.toLowerCase())) return;
+      labels.add(value);
+    }
+
+    addLabel(item['name'] ?? requested);
+    addLabel(item['admin3']);
+    addLabel(item['admin2']);
+    addLabel(item['admin1']);
+    final country = '${item['country'] ?? ''}'.trim();
+    if (country.isNotEmpty && '${item['country_code'] ?? ''}'.toUpperCase() != 'VN') {
+      addLabel(country);
+    }
+    final display = labels.take(3).join(', ');
+    return (display.isEmpty ? requested : display, lat, lon);
+  }
+
+
+  String _foldVietnamese(String input) {
+    var value = input.toLowerCase();
+    const groups = <String, String>{
+      'a': 'àáạảãâầấậẩẫăằắặẳẵ',
+      'e': 'èéẹẻẽêềếệểễ',
+      'i': 'ìíịỉĩ',
+      'o': 'òóọỏõôồốộổỗơờớợởỡ',
+      'u': 'ùúụủũưừứựửữ',
+      'y': 'ỳýỵỷỹ',
+      'd': 'đ',
+    };
+    groups.forEach((plain, accented) {
+      for (final rune in accented.runes) {
+        value = value.replaceAll(String.fromCharCode(rune), plain);
+      }
+    });
+    return value.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   Future<http.Response> _get(Uri uri, {required Duration timeout}) async {
@@ -666,7 +748,7 @@ class PublicDataProviders {
       try {
         final response = await _client.get(uri, headers: const {
           'Accept': 'application/json,text/xml,text/html,text/csv,*/*;q=0.8',
-          'User-Agent': 'AI-LHHT/4.0 Android',
+          'User-Agent': 'AI-LHHT/4.1.2 Android',
           'Cache-Control': 'no-cache',
         }).timeout(timeout);
         if (response.statusCode >= 500 && attempt == 0) {

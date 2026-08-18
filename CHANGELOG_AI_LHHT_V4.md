@@ -1,3 +1,17 @@
+# CHANGELOG – AI-LHHT v4
+
+## 4.1.2+412 – Native Voice + Weather Clean Pro
+
+
+- Sửa race ở cloud TTS: đổi sample-rate theo server hello không còn stop/re-create PCM player đúng lúc `tts:start`.
+- Queue Opus downlink tuần tự, đếm frame nhận/phát và ghi lỗi playback để chẩn đoán trường hợp có chữ nhưng không tiếng.
+- Giữ mặc định Xiaozhi Native Voice; reset preference key để bản nâng cấp không kế thừa nhầm lựa chọn local TTS cũ.
+- Khi Native Voice bật, không khởi tạo FlutterTts ở nền để tránh local TTS tranh audio-focus với PCM Female Voice.
+- Ghép nhiều `tts.sentence_start` thành một bubble; ẩn `% weather...` / `% search_knowledge...` và bỏ Markdown `**`, `__`, backtick trước khi hiển thị.
+- Weather giữ nguyên địa điểm người dùng nói sau `ở/tại`; geocoder so khớp cả tiếng Việt có/không dấu, ưu tiên Việt Nam khi trùng tên và từ chối kết quả có độ khớp thấp thay vì đoán địa điểm khác.
+- MCP công bố tool weather/AQI/news cụ thể, ưu tiên STT gốc để chống query drift và yêu cầu backend trả tối đa 2 câu, không Markdown/bình luận thêm.
+- Thêm regression tests cho location routing và response sanitizer.
+
 # PATCH 4.0.1+401 – Build Stability & Routing Fix
 
 - Sửa ToolIntentRouter với cụm tiếng Việt có dấu (`xổ số`, `thời tiết`, `giá vàng`, `tin tức`) không còn rơi nhầm sang Agent do giới hạn ASCII của `\b`.

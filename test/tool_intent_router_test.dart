@@ -42,6 +42,16 @@ void main() {
     expect(weather?.parameters['location']?.toLowerCase(), contains('đà nẵng'));
   });
 
+  test('keeps explicitly spoken weather location', () {
+    final ward = router.route('thời tiết ở Chánh Hiệp hôm nay');
+    expect(ward?.toolId, 'weather');
+    expect(ward?.parameters['location'], 'Chánh Hiệp');
+
+    final city = router.route('thời tiết tại Đà Nẵng bây giờ');
+    expect(city?.toolId, 'weather');
+    expect(city?.parameters['location'], 'Đà Nẵng');
+  });
+
   test('routes currency conversion', () {
     final route = router.route('100 USD sang VND');
     expect(route?.toolId, 'currency_converter');
