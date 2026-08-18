@@ -6,17 +6,15 @@ class VoiceOutputSettingsScreen extends StatefulWidget {
   const VoiceOutputSettingsScreen({super.key});
 
   @override
-  State<VoiceOutputSettingsScreen> createState() =>
-      _VoiceOutputSettingsScreenState();
+  State<VoiceOutputSettingsScreen> createState() => _VoiceOutputSettingsScreenState();
 }
 
-class _VoiceOutputSettingsScreenState
-    extends State<VoiceOutputSettingsScreen> {
+class _VoiceOutputSettingsScreenState extends State<VoiceOutputSettingsScreen> {
   final VoiceOutputPreferences _preferences = VoiceOutputPreferences();
-  final UnifiedSpeechOutputService _speech =
-      UnifiedSpeechOutputService.instance;
+  final UnifiedSpeechOutputService _speech = UnifiedSpeechOutputService.instance;
   bool _loading = true;
-  bool _unified = true;
+  bool _nativeXiaozhi = true;
+  bool _localUnified = false;
   bool _ttsReady = false;
 
   @override
@@ -26,11 +24,13 @@ class _VoiceOutputSettingsScreenState
   }
 
   Future<void> _load() async {
+    final native = await _preferences.useXiaozhiNativeVoice();
     final unified = await _preferences.useUnifiedVoice();
     final ready = await _speech.initialize(locale: 'vi-VN');
     if (!mounted) return;
     setState(() {
-      _unified = unified;
+      _nativeXiaozhi = native;
+      _localUnified = unified;
       _ttsReady = ready;
       _loading = false;
     });
@@ -39,7 +39,7 @@ class _VoiceOutputSettingsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Giọng nói ổn định')),
+      appBar: AppBar(title: const Text('Nguồn giọng nói')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -47,21 +47,43 @@ class _VoiceOutputSettingsScreenState
               children: [
                 Card(
                   child: SwitchListTile.adaptive(
-                    value: _unified,
+                    value: _nativeXiaozhi,
                     onChanged: (value) async {
-                      await _preferences.setUseUnifiedVoice(value);
+                      await _preferences.setUseXiaozhiNativeVoice(value);
+                      if (value) await _preferences.setUseUnifiedVoice(false);
                       if (!mounted) return;
-                      setState(() => _unified = value);
+                      setState(() {
+                        _nativeXiaozhi = value;
+                        if (value) _localUnified = false;
+                      });
                     },
-                    secondary: const Icon(Icons.record_voice_over_rounded),
+                    secondary: const Icon(Icons.cloud_done_rounded),
                     title: const Text(
-                      'Dùng một giọng cho toàn bộ app',
+                      'Giữ giọng Xiaozhi chính thức',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
                     subtitle: Text(
-                      _unified
-                          ? 'Agent, công cụ realtime và phiên dịch dùng cùng TTS hệ thống. Khuyên dùng để tránh đổi giọng và tranh audio-focus.'
-                          : 'Agent dùng giọng Xiaozhi cloud; Tool/phiên dịch dùng giọng hệ thống nên có thể khác giọng.',
+                      _nativeXiaozhi
+                          ? 'Đang ưu tiên audio cloud của Agent. Nếu xiaozhi.me đang chọn “Giọng nữ (Female Voice)”, app sẽ phát đúng audio giọng đó, không thay bằng TTS Android.'
+                          : 'Đã tắt giọng cloud. Có thể dùng TTS Android bên dưới.',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: SwitchListTile.adaptive(
+                    value: _localUnified,
+                    onChanged: _nativeXiaozhi
+                        ? null
+                        : (value) async {
+                            await _preferences.setUseUnifiedVoice(value);
+                            if (!mounted) return;
+                            setState(() => _localUnified = value);
+                          },
+                    secondary: const Icon(Icons.phone_android_rounded),
+                    title: const Text('Dùng TTS Android thay thế'),
+                    subtitle: const Text(
+                      'Chỉ bật khi bạn thực sự muốn thay giọng Xiaozhi. Chế độ này không được bật mặc định ở v4.1.1.',
                     ),
                   ),
                 ),
@@ -69,39 +91,23 @@ class _VoiceOutputSettingsScreenState
                 Card(
                   child: ListTile(
                     leading: Icon(
-                      _ttsReady ? Icons.check_circle : Icons.error_outline,
-                      color: _ttsReady ? Colors.green : Colors.orange,
+                      _nativeXiaozhi ? Icons.check_circle : (_ttsReady ? Icons.info : Icons.error_outline),
+                      color: _nativeXiaozhi ? Colors.green : (_ttsReady ? Colors.blue : Colors.orange),
                     ),
-                    title: Text(_ttsReady
-                        ? 'TTS tiếng Việt sẵn sàng'
-                        : 'TTS tiếng Việt chưa sẵn sàng'),
+                    title: Text(_nativeXiaozhi ? 'Xiaozhi Native Voice đang được khóa' : 'TTS Android ${_ttsReady ? 'sẵn sàng' : 'chưa sẵn sàng'}'),
                     subtitle: Text(
-                      _ttsReady
-                          ? 'Voice: ${_speech.lastVoice.isEmpty ? 'theo hệ thống' : _speech.lastVoice}'
-                          : 'Hãy cài dữ liệu Text-to-Speech tiếng Việt trong Android.',
+                      _nativeXiaozhi
+                          ? 'Agent và các kết quả realtime qua MCP sẽ do Xiaozhi server tổng hợp và phát bằng voice profile của Agent.'
+                          : (_ttsReady ? 'Voice local: ${_speech.lastVoice.isEmpty ? 'theo hệ thống' : _speech.lastVoice}' : 'Cần cài dữ liệu TTS trên Android.'),
                     ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: !_ttsReady
-                      ? null
-                      : () async {
-                          await _speech.stop();
-                          await _speech.speak(
-                            'Đây là giọng nói ổn định của AI LHHT.',
-                            locale: 'vi-VN',
-                          );
-                        },
-                  icon: const Icon(Icons.volume_up_rounded),
-                  label: const Text('Nghe thử giọng'),
                 ),
                 const SizedBox(height: 16),
                 const Card(
                   child: Padding(
                     padding: EdgeInsets.all(16),
                     child: Text(
-                      'Lưu ý: nếu tắt “một giọng”, câu trả lời từ Xiaozhi có thể dùng giọng cloud khác với giọng của công cụ realtime. Đây là hành vi cố ý, không phải lỗi.',
+                      'Lưu ý: lựa chọn “Female Voice” nằm trên cấu hình Agent của xiaozhi.me. App không tự đặt tên voice cloud; app chỉ bảo đảm không chặn hoặc thay thế audio TTS mà Xiaozhi gửi về. Phiên dịch đa ngôn ngữ vẫn có thể cần TTS theo ngôn ngữ đích trên điện thoại.',
                     ),
                   ),
                 ),

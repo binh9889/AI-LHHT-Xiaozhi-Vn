@@ -1,4 +1,4 @@
-name: Build AI-LHHT v4.1 Voice Stability Pro APK
+name: Build AI-LHHT v4.1.1 Xiaozhi Native Voice Pro APK
 
 on:
   workflow_dispatch:
@@ -73,19 +73,19 @@ jobs:
           fi
 
       - name: Build APK
-        run: flutter build apk --debug --build-name=4.1.0 --build-number=410
+        run: flutter build apk --debug --build-name=4.1.1 --build-number=411
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-debug.apk AI-LHHT-v4.1.0-Voice-Stability-Pro-VI.apk
+        run: cp build/app/outputs/flutter-apk/app-debug.apk AI-LHHT-v4.1.1-Xiaozhi-Native-Voice-Pro-VI.apk
 
       - name: SHA256
-        run: sha256sum AI-LHHT-v4.1.0-Voice-Stability-Pro-VI.apk | tee AI-LHHT-v4.1.0-Voice-Stability-Pro-VI.apk.sha256
+        run: sha256sum AI-LHHT-v4.1.1-Xiaozhi-Native-Voice-Pro-VI.apk | tee AI-LHHT-v4.1.1-Xiaozhi-Native-Voice-Pro-VI.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI-LHHT-v4.1.0-Voice-Stability-Pro-VI
+          name: AI-LHHT-v4.1.1-Xiaozhi-Native-Voice-Pro-VI
           retention-days: 30
           path: |
-            AI-LHHT-v4.1.0-Voice-Stability-Pro-VI.apk
-            AI-LHHT-v4.1.0-Voice-Stability-Pro-VI.apk.sha256
+            AI-LHHT-v4.1.1-Xiaozhi-Native-Voice-Pro-VI.apk
+            AI-LHHT-v4.1.1-Xiaozhi-Native-Voice-Pro-VI.apk.sha256

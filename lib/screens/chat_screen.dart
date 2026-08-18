@@ -49,13 +49,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _connectionCheckTimer; // Thêm定时器检查连接状态
   Timer? _autoReconnectTimer; // 自动重连定时器
 
-  // v4.1 dùng một TTS duy nhất cho Agent + Tool + Interpreter khi chế độ
-  // "Giọng ổn định" bật. Không còn hai engine tranh audio-focus.
+  // v4.1.1: mặc định giữ nguyên audio TTS do Xiaozhi cloud gửi về. Đây là
+  // giọng Agent đã chọn trên xiaozhi.me (ví dụ Female Voice). Android TTS chỉ
+  // là fallback/phiên dịch và không được âm thầm thay giọng của Agent.
   final UnifiedSpeechOutputService _speechOutput =
       UnifiedSpeechOutputService.instance;
   final VoiceOutputPreferences _voiceOutputPreferences =
       VoiceOutputPreferences();
-  bool _unifiedVoiceOutput = true;
+  bool _unifiedVoiceOutput = false;
+  bool _xiaozhiNativeVoice = true;
   bool _liveInterpreterMode = false;
   bool _interpreterBusy = false;
   bool _interpreterWaitingForXiaozhi = false;
@@ -163,9 +165,13 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _initializeVoiceOutput() async {
+    final preferNative = await _voiceOutputPreferences.useXiaozhiNativeVoice();
     final wantsUnified = await _voiceOutputPreferences.useUnifiedVoice();
     final ttsReady = await _speechOutput.initialize(locale: 'vi-VN');
-    _unifiedVoiceOutput = wantsUnified && ttsReady;
+    _xiaozhiNativeVoice = preferNative;
+    _unifiedVoiceOutput = !preferNative && wantsUnified && ttsReady;
+    // false = phát nguyên binary Opus TTS do Xiaozhi server gửi về, giữ đúng
+    // Female Voice/voice profile của Agent trên xiaozhi.me.
     _xiaozhiService?.setSuppressIncomingAudio(_unifiedVoiceOutput);
     if (mounted) setState(() {});
   }
@@ -236,6 +242,7 @@ class _ChatScreenState extends State<ChatScreen> {
       token: xiaozhiConfig.token,
     );
     _xiaozhiService!.setSuppressIncomingAudio(_unifiedVoiceOutput);
+    _xiaozhiService!.setRealtimeMcpHandler(_handleMcpRealtimeQuery);
 
     // ThêmTin nhắn监听器
     _xiaozhiService!.addListener(_handleXiaozhiMessage);
@@ -247,6 +254,37 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  Future<String> _handleMcpRealtimeQuery(String query) async {
+    final normalized = VietnameseTranscriptNormalizer.normalize(query).normalized.trim();
+    final lower = normalized.toLowerCase();
+
+    if (RegExp(r'(mã\s*thiết\s*bị|device\s*-?\s*id|client\s*-?\s*id|địa\s*chỉ\s*mac|mac\s*address|thông\s*tin\s*thiết\s*bị)', caseSensitive: false).hasMatch(lower)) {
+      final provider = Provider.of<ConfigProvider>(context, listen: false);
+      XiaozhiConfig? config;
+      for (final item in provider.xiaozhiConfigs) {
+        if (item.id == widget.conversation.configId) {
+          config = item;
+          break;
+        }
+      }
+      config ??= provider.xiaozhiConfigs.isNotEmpty ? provider.xiaozhiConfigs.first : null;
+      if (config != null) {
+        return 'Device-ID/MAC: ${config.macAddress}; Client-ID: ${config.clientId}; '
+            'WebSocket: ${config.websocketUrl}; trạng thái: ${_xiaozhiService?.isConnected == true ? "đã kết nối" : "chưa kết nối"}.';
+      }
+    }
+
+    final toolResult = await _toolEngine.handle(normalized);
+    if (toolResult != null) {
+      return toolResult.success
+          ? toolResult.summary
+          : (toolResult.userMessage ?? toolResult.summary);
+    }
+    final legacy = await _realtimeTools.handle(normalized, forceMusic: false);
+    if (legacy != null) return legacy.text;
+    return 'Ứng dụng chưa có công cụ phù hợp cho truy vấn này.';
   }
 
   // 处理XiaozhiTin nhắn
@@ -331,16 +369,21 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     _scrollToBottom();
 
-    if (await _handleLocalDeviceInfo(text, conversationProvider)) {
-      _xiaozhiService?.discardResponseGate();
-      return;
-    }
-    if (await _handleRealtimeTool(text, conversationProvider)) {
-      _xiaozhiService?.discardResponseGate();
-      return;
+    // Khi backend Xiaozhi đã bắt tay MCP, để Agent xử lý cả truy vấn thiết bị
+    // và realtime qua self.realtime.lookup. Như vậy câu trả lời cuối cùng luôn
+    // được Xiaozhi cloud nói bằng voice profile/Female Voice của Agent.
+    if (_xiaozhiService?.isMcpBackendDetected != true) {
+      if (await _handleLocalDeviceInfo(text, conversationProvider)) {
+        _xiaozhiService?.discardResponseGate();
+        return;
+      }
+      if (await _handleRealtimeTool(text, conversationProvider)) {
+        _xiaozhiService?.discardResponseGate();
+        return;
+      }
     }
 
-    // Đây là hội thoại Agent thật. Chỉ bây giờ mới mở response gate để text
+    // Đây là hội thoại Agent thật (hoặc Agent + MCP). Chỉ bây giờ mới mở response gate để text
     // và audio Agent được phép đi ra. Nhờ vậy local tool không còn chạy đua
     // với `% gold_price...`, `% search_knowledge...` từ cloud.
     await _xiaozhiService?.releaseResponseGate();
@@ -367,7 +410,7 @@ class _ChatScreenState extends State<ChatScreen> {
         content: message,
       );
       _scrollToBottom();
-      await _speakInterpreter(message, 'vi-VN');
+      if (!_xiaozhiNativeVoice) await _speakInterpreter(message, 'vi-VN');
       return true;
     }
 
@@ -389,7 +432,7 @@ class _ChatScreenState extends State<ChatScreen> {
       content: result.text,
     );
     _scrollToBottom();
-    await _speakInterpreter(result.text, 'vi-VN');
+    if (!_xiaozhiNativeVoice) await _speakInterpreter(result.text, 'vi-VN');
 
     if (result.kind == RealtimeToolKind.music &&
         result.externalUri != null &&
@@ -445,7 +488,7 @@ class _ChatScreenState extends State<ChatScreen> {
       content: answer,
     );
     _scrollToBottom();
-    await _speakInterpreter(answer, 'vi-VN');
+    if (!_xiaozhiNativeVoice) await _speakInterpreter(answer, 'vi-VN');
     return true;
   }
 

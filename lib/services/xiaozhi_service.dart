@@ -35,6 +35,7 @@ typedef XiaozhiServiceListener = void Function(XiaozhiServiceEvent event);
 
 /// Tin nhắn监听器
 typedef MessageListener = void Function(dynamic message);
+typedef RealtimeMcpHandler = Future<String> Function(String query);
 
 /// Dịch vụ Xiaozhi
 class XiaozhiService {
@@ -58,6 +59,8 @@ class XiaozhiService {
   MessageListener? _messageListener;
   bool _suppressIncomingAudio = false;
   Completer<void>? _suppressedTtsStopCompleter;
+  RealtimeMcpHandler? _realtimeMcpHandler;
+  bool _mcpBackendDetected = false;
 
   // v4.1 response gate: trong lúc chờ STT để Tool Router quyết định, không
   // phát ngay câu trả lời/TTS của Agent. Nếu câu là local tool thì buffer bị
@@ -148,6 +151,15 @@ class XiaozhiService {
   void setMessageListener(MessageListener listener) {
     _messageListener = listener;
   }
+
+  /// Đăng ký một tool MCP tổng quát để backend Xiaozhi có thể gọi các công cụ
+  /// realtime của app. Khi backend gọi tool, kết quả được trả lại cho LLM và
+  /// chính Xiaozhi sẽ tổng hợp + phát bằng giọng Agent đã cấu hình trên web.
+  void setRealtimeMcpHandler(RealtimeMcpHandler handler) {
+    _realtimeMcpHandler = handler;
+  }
+
+  bool get isMcpBackendDetected => _mcpBackendDetected;
 
   /// Thêm事件监听器
   void addListener(XiaozhiServiceListener listener) {
@@ -603,6 +615,10 @@ class XiaozhiService {
           }
           break;
 
+        case 'mcp':
+          unawaited(_handleMcpEnvelope(jsonData));
+          break;
+
         case 'emotion':
           // 处理表情Tin nhắn
           final String emotion = jsonData['emotion'] ?? '';
@@ -624,6 +640,126 @@ class XiaozhiService {
     } catch (e) {
       print('$TAG: 解析Tin nhắnThất bại: $e, 原始Tin nhắn: $message');
     }
+  }
+
+  Future<void> _handleMcpEnvelope(Map<String, dynamic> envelope) async {
+    final payload = envelope['payload'];
+    if (payload is! Map) return;
+    final request = Map<String, dynamic>.from(payload);
+    final method = (request['method'] ?? '').toString();
+    final id = request['id'];
+    if (method.isEmpty) return;
+
+    _mcpBackendDetected = true;
+
+    if (method == 'initialize') {
+      _sendMcpResult(id, {
+        'protocolVersion': '2024-11-05',
+        'capabilities': {'tools': <String, dynamic>{}},
+        'serverInfo': {
+          'name': 'AI-LHHT-Android',
+          'version': '4.1.1',
+        },
+      });
+      return;
+    }
+
+    if (method == 'tools/list') {
+      _sendMcpResult(id, {
+        'tools': [
+          {
+            'name': 'self.realtime.lookup',
+            'description': 'Tra cứu dữ liệu realtime và tiện ích Việt Nam trong ứng dụng AI-LHHT. '
+                'Hãy dùng tool này khi người dùng hỏi xổ số, thời tiết, AQI, tỷ giá, đổi tiền, '
+                'crypto, tin tức, mã vùng, nhà mạng, biển số, lịch âm, thể thao, giá vàng hoặc '
+                'các truy vấn realtime khác, hoặc thông tin Device-ID/Client-ID/MAC của thiết bị hiện tại. '
+                'Truyền nguyên câu hỏi của người dùng vào query.',
+            'inputSchema': {
+              'type': 'object',
+              'properties': {
+                'query': {
+                  'type': 'string',
+                  'description': 'Nguyên câu hỏi cần tra cứu.',
+                },
+              },
+              'required': ['query'],
+            },
+          },
+        ],
+      });
+      return;
+    }
+
+    if (method == 'tools/call') {
+      final params = request['params'];
+      if (params is! Map) {
+        _sendMcpError(id, -32602, 'Missing params');
+        return;
+      }
+      final name = (params['name'] ?? '').toString();
+      if (name != 'self.realtime.lookup') {
+        _sendMcpError(id, -32601, 'Unknown tool: $name');
+        return;
+      }
+      final arguments = params['arguments'];
+      final query = arguments is Map ? (arguments['query'] ?? '').toString().trim() : '';
+      if (query.isEmpty) {
+        _sendMcpError(id, -32602, 'query is required');
+        return;
+      }
+      try {
+        final handler = _realtimeMcpHandler;
+        if (handler == null) {
+          throw StateError('Realtime tool handler is not registered.');
+        }
+        final resultText = (await handler(query)).trim();
+        _sendMcpResult(id, {
+          'content': [
+            {'type': 'text', 'text': resultText.isEmpty ? 'Không có dữ liệu.' : resultText},
+          ],
+          'isError': false,
+        });
+      } catch (e) {
+        _sendMcpResult(id, {
+          'content': [
+            {'type': 'text', 'text': 'Không tra cứu được dữ liệu lúc này: $e'},
+          ],
+          'isError': true,
+        });
+      }
+      return;
+    }
+
+    if (id != null) {
+      _sendMcpError(id, -32601, 'Method not implemented: $method');
+    }
+  }
+
+  void _sendMcpResult(dynamic id, Map<String, dynamic> result) {
+    if (id == null) return;
+    _sendMcpPayload({
+      'jsonrpc': '2.0',
+      'id': id,
+      'result': result,
+    });
+  }
+
+  void _sendMcpError(dynamic id, int code, String message) {
+    if (id == null) return;
+    _sendMcpPayload({
+      'jsonrpc': '2.0',
+      'id': id,
+      'error': {'code': code, 'message': message},
+    });
+  }
+
+  void _sendMcpPayload(Map<String, dynamic> payload) {
+    final envelope = <String, dynamic>{
+      if (_sessionId != null) 'session_id': _sessionId,
+      'type': 'mcp',
+      'payload': payload,
+    };
+    _webSocketManager?.sendMessage(jsonEncode(envelope));
   }
 
   /// 开始通话

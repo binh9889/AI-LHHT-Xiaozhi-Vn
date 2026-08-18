@@ -50,13 +50,18 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Future<void> _testStableTts() async {
     final speech = UnifiedSpeechOutputService.instance;
     final prefs = VoiceOutputPreferences();
+    final native = await prefs.useXiaozhiNativeVoice();
     final unified = await prefs.useUnifiedVoice();
     final ready = await speech.initialize(locale: 'vi-VN');
     if (!mounted) return;
     setState(() {
-      _ttsStatus = ready
-          ? '${unified ? "Một giọng: BẬT" : "Một giọng: TẮT"} • vi-VN PASS • ${speech.lastVoice.isEmpty ? "voice hệ thống" : speech.lastVoice}'
-          : 'TTS vi-VN không khả dụng';
+      if (native) {
+        _ttsStatus = 'Xiaozhi Native Voice: BẬT • Agent dùng audio cloud/voice profile trên xiaozhi.me';
+      } else if (ready) {
+        _ttsStatus = '${unified ? "TTS Android: BẬT" : "TTS Android: TẮT"} • vi-VN PASS • ${speech.lastVoice.isEmpty ? "voice hệ thống" : speech.lastVoice}';
+      } else {
+        _ttsStatus = 'Xiaozhi Native Voice: TẮT • TTS Android vi-VN không khả dụng';
+      }
     });
   }
 
@@ -154,7 +159,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 _PipelineItem('VAD', 'Điều khiển bởi phiên Xiaozhi', Icons.multiline_chart_rounded, provider.xiaozhiConfigs.isNotEmpty),
                 _PipelineItem('ASR', 'Native locale-locked + Xiaozhi fallback', Icons.record_voice_over_rounded, true),
                 _PipelineItem('AGENT', 'Xiaozhi / Dify / MiniMax', Icons.smart_toy_outlined, provider.xiaozhiConfigs.isNotEmpty || provider.difyConfigs.isNotEmpty || provider.minimaxConfigs.isNotEmpty),
-                _PipelineItem('TTS', 'Unified TTS v4.1 • một hàng đợi • một voice', Icons.volume_up_rounded, !_ttsStatus.contains('không khả dụng')),
+                _PipelineItem('TTS', 'Xiaozhi Native Voice v4.1.1 • cloud TTS ưu tiên', Icons.volume_up_rounded, true),
               ],
             ),
             const SizedBox(height: 20),
@@ -171,7 +176,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             ),
             _StatusTile(
               icon: Icons.volume_up_rounded,
-              title: 'Voice Stability / TTS',
+              title: 'Xiaozhi Native Voice / TTS',
               subtitle: _ttsStatus,
               trailing: TextButton(onPressed: _testStableTts, child: const Text('Kiểm tra')),
             ),

@@ -3,9 +3,9 @@ set -euo pipefail
 
 STATIC_ONLY="${1:-}"
 
-echo '== AI-LHHT v4.1.0 Voice Stability Pro source checks =='
-grep -q '^version: 4.1.0+410$' pubspec.yaml
-grep -q "static const String appVersion = '4.1.0';" lib/services/xiaozhi_provisioning_service.dart
+echo '== AI-LHHT v4.1.1 Xiaozhi Native Voice Pro source checks =='
+grep -q '^version: 4.1.1+411$' pubspec.yaml
+grep -q "static const String appVersion = '4.1.1';" lib/services/xiaozhi_provisioning_service.dart
 grep -q 'version "2.1.20"' android/settings.gradle.kts
 grep -q 'android.speech.RecognitionService' android/app/src/main/AndroidManifest.xml
 grep -q 'com.google.mlkit:translate:17.0.3' android/app/build.gradle.kts
@@ -54,6 +54,12 @@ grep -q 'RealtimeToolsScreen' lib/widgets/discovery_screen.dart
 
 grep -q 'class UnifiedSpeechOutputService' lib/services/unified_speech_output_service.dart
 grep -q 'beginResponseGate' lib/services/xiaozhi_service.dart
+
+grep -q 'useXiaozhiNativeVoice' lib/services/voice_output_preferences.dart
+grep -q 'self.realtime.lookup' lib/services/xiaozhi_service.dart
+grep -q '_handleMcpRealtimeQuery' lib/screens/chat_screen.dart
+grep -q 'Giữ giọng Xiaozhi chính thức' lib/screens/voice_output_settings_screen.dart
+grep -q 'isMcpBackendDetected' lib/services/xiaozhi_service.dart
 grep -q 'releaseResponseGate' lib/services/xiaozhi_service.dart
 grep -q 'miền' lib/utils/vietnamese_transcript_normalizer.dart
 grep -q 'mắt|mắc|bắt|bát|bắc' lib/utils/vietnamese_transcript_normalizer.dart
