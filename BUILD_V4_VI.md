@@ -1,9 +1,9 @@
-# Build AI-LHHT v4.0.1
+# Build AI-LHHT v4.1.0
 
 ## Version
 
 ```text
-4.0.1+401
+4.1.0+410
 ```
 
 ## Kiểm tra tĩnh
@@ -33,7 +33,7 @@ flutter build apk --debug --build-name=4.0.1 --build-number=401
 APK mục tiêu:
 
 ```text
-AI-LHHT-v4.0.1-Realtime-Tools-Pro-VI.apk
+AI-LHHT-v4.1.0-Realtime-Tools-Pro-VI.apk
 ```
 
 GitHub Actions `.github/workflows/build-vi-apk.yml` chạy tự động khi push lên `develop-v4`.

@@ -1,4 +1,4 @@
-# RELEASE STATUS – AI-LHHT v4.0.1
+# RELEASE STATUS – AI-LHHT v4.1.0
 
 > `READY` ở đây nghĩa là implementation/source route đã có nguồn chạy được theo phạm vi ghi rõ. Compile/runtime APK vẫn phải được GitHub Actions xác nhận.
 

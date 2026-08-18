@@ -5,7 +5,7 @@ import 'package:ai_assistant/services/native_speech_service.dart';
 import 'package:ai_assistant/services/translation_service.dart';
 import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:ai_assistant/services/unified_speech_output_service.dart';
 import 'package:provider/provider.dart';
 
 class InterpreterScreen extends StatefulWidget {
@@ -32,7 +32,7 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
 
   final TextEditingController _inputController = TextEditingController();
   final TextEditingController _outputController = TextEditingController();
-  final FlutterTts _tts = FlutterTts();
+  final UnifiedSpeechOutputService _speechOutput = UnifiedSpeechOutputService.instance;
   final NativeSpeechService _speech = NativeSpeechService.instance;
 
   String _sourceLanguage = 'Tiếng Việt';
@@ -204,19 +204,14 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
   Future<void> _speakText(String text, String locale) async {
     if (text.trim().isEmpty) return;
     try {
-      await _tts.stop();
-      await _tts.awaitSpeakCompletion(true);
-      if (locale != 'auto') {
-        final available = await _tts.isLanguageAvailable(locale);
-        if (available == false || available == 0) {
-          _snack('Máy chưa có giọng TTS $locale. Hãy cài giọng nói ngôn ngữ này trong cài đặt Android.');
-          return;
-        }
-        await _tts.setLanguage(locale);
+      final effectiveLocale = locale == 'auto' ? 'vi-VN' : locale;
+      if (!await _speechOutput.canSpeakLocale(effectiveLocale)) {
+        _snack(
+          'Máy chưa có giọng TTS $effectiveLocale. Hãy cài giọng nói ngôn ngữ này trong cài đặt Android.',
+        );
+        return;
       }
-      await _tts.setSpeechRate(0.48);
-      await _tts.setPitch(1.0);
-      await _tts.speak(text);
+      await _speechOutput.speak(text, locale: effectiveLocale);
     } catch (e) {
       _snack('Không phát được giọng $locale: $e');
     }
@@ -253,7 +248,7 @@ class _InterpreterScreenState extends State<InterpreterScreen> {
     _speech.cancel();
     _inputController.dispose();
     _outputController.dispose();
-    _tts.stop();
+    _speechOutput.stop();
     super.dispose();
   }
 

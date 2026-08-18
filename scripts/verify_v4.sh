@@ -3,9 +3,9 @@ set -euo pipefail
 
 STATIC_ONLY="${1:-}"
 
-echo '== AI-LHHT v4.0.1 Realtime Tools Pro source checks =='
-grep -q '^version: 4.0.1+401$' pubspec.yaml
-grep -q "static const String appVersion = '4.0.1';" lib/services/xiaozhi_provisioning_service.dart
+echo '== AI-LHHT v4.1.0 Voice Stability Pro source checks =='
+grep -q '^version: 4.1.0+410$' pubspec.yaml
+grep -q "static const String appVersion = '4.1.0';" lib/services/xiaozhi_provisioning_service.dart
 grep -q 'version "2.1.20"' android/settings.gradle.kts
 grep -q 'android.speech.RecognitionService' android/app/src/main/AndroidManifest.xml
 grep -q 'com.google.mlkit:translate:17.0.3' android/app/build.gradle.kts
@@ -22,9 +22,11 @@ test -f lib/screens/tool_provider_settings_screen.dart
 test -f lib/screens/music_player_screen.dart
 test -f lib/screens/interpreter_screen.dart
 test -f lib/screens/diagnostics_screen.dart
+test -f lib/screens/voice_output_settings_screen.dart
 test -f test/tool_registry_test.dart
 test -f test/tool_intent_router_test.dart
 test -f test/realtime_tool_engine_local_test.dart
+test -f test/vietnamese_transcript_normalizer_test.dart
 test -f README_V4_VI.md
 test -f BUILD_V4_VI.md
 test -f CHANGELOG_AI_LHHT_V4.md
@@ -49,6 +51,12 @@ grep -q 'RealtimeToolsScreen' lib/widgets/discovery_screen.dart
 ! grep -R "Bearer test-token" lib/services/xiaozhi_websocket_manager.dart
 ! grep -q '_xiaozhiService!\.sendTextMessage(text)' lib/screens/chat_screen.dart
 
+
+grep -q 'class UnifiedSpeechOutputService' lib/services/unified_speech_output_service.dart
+grep -q 'beginResponseGate' lib/services/xiaozhi_service.dart
+grep -q 'releaseResponseGate' lib/services/xiaozhi_service.dart
+grep -q 'miền' lib/utils/vietnamese_transcript_normalizer.dart
+grep -q 'mắt|mắc|bắt|bát|bắc' lib/utils/vietnamese_transcript_normalizer.dart
 echo 'Static source checks: PASS'
 
 if [ "$STATIC_ONLY" = "--static-only" ]; then

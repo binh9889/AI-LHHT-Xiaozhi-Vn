@@ -28,8 +28,8 @@ class ToolIntentRouter {
     if (_matches(q, r'\b(mã\s*vùng|area\s*code|đầu\s*số\s*cố\s*định)\b')) {
       return hit('vn_area_code', .96);
     }
-    if (_matches(q, r'\b(nhà\s*mạng|mạng\s*gì|thuộc\s*mạng|viettel|vinaphone|mobifone)\b') &&
-        _matches(q, r'\d{3,10}|đầu\s*số|số\s*điện\s*thoại')) {
+    if (_matches(q, r'\b(nhà\s*mạng|mạng\s*gì|mạng\s*nào|thuộc\s*mạng|viettel|vinaphone|mobifone)\b') &&
+        _matches(q, r'\d{3,10}|đầu\s*số|đầu\s*\d{3,4}|số\s*điện\s*thoại')) {
       return hit('vn_carrier_lookup', .94);
     }
     if (_matches(q, r'\b(biển\s*số|biển\s*xe|mã\s*biển)\b')) {

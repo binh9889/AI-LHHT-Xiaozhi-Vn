@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:ai_assistant/utils/vietnamese_transcript_normalizer.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
@@ -19,6 +18,8 @@ import 'package:ai_assistant/services/xiaozhi_service.dart';
 import 'package:ai_assistant/services/translation_service.dart';
 import 'package:ai_assistant/services/native_speech_service.dart';
 import 'package:ai_assistant/services/realtime_tool_service.dart';
+import 'package:ai_assistant/services/unified_speech_output_service.dart';
+import 'package:ai_assistant/services/voice_output_preferences.dart';
 import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
 import 'package:ai_assistant/utils/interpreter_turn_controller.dart';
 import 'package:ai_assistant/services/minimax_service.dart';
@@ -48,8 +49,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _connectionCheckTimer; // Thêm定时器检查连接状态
   Timer? _autoReconnectTimer; // 自动重连定时器
 
-  // Phiên dịch trực tiếp ngay trong cuộc trò chuyện Xiaozhi.
-  final FlutterTts _interpreterTts = FlutterTts();
+  // v4.1 dùng một TTS duy nhất cho Agent + Tool + Interpreter khi chế độ
+  // "Giọng ổn định" bật. Không còn hai engine tranh audio-focus.
+  final UnifiedSpeechOutputService _speechOutput =
+      UnifiedSpeechOutputService.instance;
+  final VoiceOutputPreferences _voiceOutputPreferences =
+      VoiceOutputPreferences();
+  bool _unifiedVoiceOutput = true;
   bool _liveInterpreterMode = false;
   bool _interpreterBusy = false;
   bool _interpreterWaitingForXiaozhi = false;
@@ -64,7 +70,6 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _usingNativeSpeech = false;
   String _nativePartialTranscript = '';
   bool _pendingOnlineMusicSearch = false;
-  DateTime? _suppressAgentRepliesUntil;
 
   // Giọng nói输入相关
   bool _isVoiceInputMode = false;
@@ -88,7 +93,7 @@ class _ChatScreenState extends State<ChatScreen> {
       localeB: _interpreterLocaleB,
     );
     unawaited(_nativeSpeech.initialize());
-    unawaited(_interpreterTts.awaitSpeakCompletion(true));
+    unawaited(_initializeVoiceOutput());
 
     // Cài đặt状态栏为透明并使图标为黑色
     SystemChrome.setSystemUIOverlayStyle(
@@ -157,6 +162,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _initializeVoiceOutput() async {
+    final wantsUnified = await _voiceOutputPreferences.useUnifiedVoice();
+    final ttsReady = await _speechOutput.initialize(locale: 'vi-VN');
+    _unifiedVoiceOutput = wantsUnified && ttsReady;
+    _xiaozhiService?.setSuppressIncomingAudio(_unifiedVoiceOutput);
+    if (mounted) setState(() {});
+  }
+
   // 安排自动重连
   void _scheduleReconnect() {
     // Hủy现有重连定时器
@@ -197,7 +210,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _connectionCheckTimer?.cancel();
     _autoReconnectTimer?.cancel();
     _waveAnimationTimer?.cancel();
-    _interpreterTts.stop();
+    _speechOutput.stop();
     _nativeSpeech.cancel();
 
     // 在销毁前确保停止所有音频播放
@@ -222,6 +235,7 @@ class _ChatScreenState extends State<ChatScreen> {
       clientId: xiaozhiConfig.clientId,
       token: xiaozhiConfig.token,
     );
+    _xiaozhiService!.setSuppressIncomingAudio(_unifiedVoiceOutput);
 
     // ThêmTin nhắn监听器
     _xiaozhiService!.addListener(_handleXiaozhiMessage);
@@ -257,18 +271,14 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
-      final suppressUntil = _suppressAgentRepliesUntil;
-      if (suppressUntil != null && DateTime.now().isBefore(suppressUntil)) {
-        // Local tool (xổ số/nhạc/thông tin thiết bị) đã nhận quyền xử lý câu
-        // nói. Bỏ phần TTS/text còn sót lại từ Agent cloud sau lệnh abort.
-        return;
-      }
-
       conversationProvider.addMessage(
         conversationId: widget.conversation.id,
         role: MessageRole.assistant,
         content: content,
       );
+      if (_unifiedVoiceOutput) {
+        unawaited(_speechOutput.speak(content, locale: 'vi-VN'));
+      }
     } else if (event.type == XiaozhiServiceEventType.userMessage) {
       // Nhánh dự phòng khi native speech của Android không khả dụng.
       final rawContent = (event.data ?? '').toString().trim();
@@ -299,12 +309,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _liveInterpreterMode
         ? rawText.trim()
         : VietnameseTranscriptNormalizer.normalize(rawText).normalized.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty) {
+      _xiaozhiService?.discardResponseGate();
+      return;
+    }
 
     if (await _handleInterpreterVoiceCommand(text, conversationProvider)) {
+      _xiaozhiService?.discardResponseGate();
       return;
     }
     if (_liveInterpreterMode) {
+      _xiaozhiService?.discardResponseGate();
       await _handleLiveInterpreterTurn(text, conversationProvider);
       return;
     }
@@ -316,13 +331,19 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     _scrollToBottom();
 
-    if (await _handleLocalDeviceInfo(text, conversationProvider)) return;
-    if (await _handleRealtimeTool(text, conversationProvider)) return;
+    if (await _handleLocalDeviceInfo(text, conversationProvider)) {
+      _xiaozhiService?.discardResponseGate();
+      return;
+    }
+    if (await _handleRealtimeTool(text, conversationProvider)) {
+      _xiaozhiService?.discardResponseGate();
+      return;
+    }
 
-    // Audio Xiaozhi đã được server nhận trước khi STT quay về, vì vậy không
-    // bao giờ gửi transcript trở lại bằng `listen/detect`. Nếu một recognizer
-    // cục bộ ngoài chế độ phiên dịch vô tình gọi vào đây, dừng tại transcript
-    // thay vì tạo một request text không thuộc protocol và chờ timeout.
+    // Đây là hội thoại Agent thật. Chỉ bây giờ mới mở response gate để text
+    // và audio Agent được phép đi ra. Nhờ vậy local tool không còn chạy đua
+    // với `% gold_price...`, `% search_knowledge...` từ cloud.
+    await _xiaozhiService?.releaseResponseGate();
     return;
   }
 
@@ -335,7 +356,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final toolResult = await _toolEngine.handle(text);
     if (toolResult != null) {
       _pendingOnlineMusicSearch = false;
-      _suppressAgentRepliesUntil = DateTime.now().add(const Duration(seconds: 5));
+      _xiaozhiService?.discardResponseGate();
       await _xiaozhiService?.interruptResponse();
       final message = toolResult.success
           ? toolResult.summary
@@ -357,9 +378,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (result == null) return false;
 
+    _xiaozhiService?.discardResponseGate();
     _pendingOnlineMusicSearch =
         result.kind == RealtimeToolKind.music && result.requiresFollowUp;
-    _suppressAgentRepliesUntil = DateTime.now().add(const Duration(seconds: 4));
     await _xiaozhiService?.interruptResponse();
 
     await conversationProvider.addMessage(
@@ -410,7 +431,7 @@ class _ChatScreenState extends State<ChatScreen> {
     config ??= provider.xiaozhiConfigs.isNotEmpty ? provider.xiaozhiConfigs.first : null;
     if (config == null) return false;
 
-    _suppressAgentRepliesUntil = DateTime.now().add(const Duration(seconds: 4));
+    _xiaozhiService?.discardResponseGate();
     await _xiaozhiService?.interruptResponse();
     final connected = _xiaozhiService?.isConnected == true ? 'Đã kết nối' : 'Chưa kết nối';
     final answer = 'Thông tin thiết bị hiện tại:\n'
@@ -609,21 +630,16 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _speakInterpreter(String text, String locale) async {
     if (text.trim().isEmpty) return;
     try {
-      await _interpreterTts.stop();
-      await _interpreterTts.awaitSpeakCompletion(true);
-      final available = await _interpreterTts.isLanguageAvailable(locale);
-      if (available == false || available == 0) {
+      final available = await _speechOutput.canSpeakLocale(locale);
+      if (!available) {
         if (mounted) {
           _showCustomSnackbar(
-            'Máy chưa cài giọng TTS $locale. Hãy cài giọng ngôn ngữ này trong cài đặt hệ thống.',
+            'Máy chưa cài giọng TTS $locale. Hãy cài dữ liệu giọng nói này trong Android.',
           );
         }
         return;
       }
-      await _interpreterTts.setLanguage(locale);
-      await _interpreterTts.setSpeechRate(0.48);
-      await _interpreterTts.setPitch(1.0);
-      await _interpreterTts.speak(text);
+      await _speechOutput.speak(text, locale: locale);
     } catch (e) {
       print('Không thể phát TTS $locale: $e');
       if (mounted) _showCustomSnackbar('Không phát được giọng $locale.');
@@ -1554,7 +1570,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       HapticFeedback.mediumImpact();
-      await _interpreterTts.stop();
+      await _speechOutput.stop();
       await _xiaozhiService?.stopPlayback();
 
       final requestedLocale =
@@ -1583,13 +1599,15 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         }
       } else {
-        // Chat Xiaozhi bình thường phải gửi AUDIO theo protocol chính thức.
-        // v3.3 dùng native ASR rồi inject text bằng listen/detect, nhưng detect
-        // là wake-word chứ không phải general text chat => dễ timeout.
+        // Chat Xiaozhi bình thường vẫn gửi AUDIO theo protocol chính thức,
+        // nhưng khóa phản hồi cloud tạm thời cho tới khi STT được Router phân
+        // loại. Điều này giữ chất lượng Agent mà không để Agent tranh local tool.
         _usingNativeSpeech = false;
+        _xiaozhiService!.beginResponseGate();
         await _xiaozhiService!.startListening();
       }
     } catch (e) {
+      _xiaozhiService?.discardResponseGate();
       print('Không thể bắt đầu ghi âm: $e');
       _showCustomSnackbar('Không thể bắt đầu ghi âm: $e');
       if (mounted) {
@@ -1646,6 +1664,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _usingNativeSpeech = false;
         _nativePartialTranscript = '';
       } else {
+        _xiaozhiService?.discardResponseGate();
         await _xiaozhiService?.abortListening();
       }
       _showCustomSnackbar('Đã hủy gửi');
@@ -1951,8 +1970,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // 启动波形动画
   void _startWaveAnimation() {
     _waveAnimationTimer?.cancel();
-    _interpreterTts.stop();
-    _nativeSpeech.cancel();
+    // Chỉ điều khiển UI. Không stop TTS/ASR ở đây: onLongPressEnd gọi
+    // _stopWaveAnimation() ngay trước _stopRecording(); nếu stop/cancel audio
+    // tại đây sẽ tạo race làm mất câu TTS mới hoặc hủy native ASR trước khi
+    // stopAndGetText() đọc transcript cuối.
     _waveAnimationTimer = Timer.periodic(const Duration(milliseconds: 100), (
       timer,
     ) {
@@ -1968,9 +1989,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // 停止波形动画
   void _stopWaveAnimation() {
+    // Animation lifecycle không được phép sở hữu audio lifecycle. Audio được
+    // dừng có await ở _startRecording/_cancelRecording hoặc hoàn tất ở
+    // _stopRecording. Tách hai lifecycle để tránh lỗi lúc có tiếng lúc không.
     _waveAnimationTimer?.cancel();
-    _interpreterTts.stop();
-    _nativeSpeech.cancel();
     _waveAnimationTimer = null;
   }
 

@@ -59,6 +59,15 @@ class XiaozhiService {
   bool _suppressIncomingAudio = false;
   Completer<void>? _suppressedTtsStopCompleter;
 
+  // v4.1 response gate: trong lúc chờ STT để Tool Router quyết định, không
+  // phát ngay câu trả lời/TTS của Agent. Nếu câu là local tool thì buffer bị
+  // bỏ; nếu là hội thoại thường thì mới release. Điều này loại bỏ race khiến
+  // các chuỗi kiểu `% gold_price...` hoặc `% search_knowledge...` lọt ra UI.
+  bool _responseGateActive = false;
+  final List<Uint8List> _gatedAudioFrames = <Uint8List>[];
+  final List<String> _gatedTtsSentences = <String>[];
+  Timer? _responseGateTimer;
+
   /// Tạo một service riêng cho mỗi cấu hình/cuộc trò chuyện.
   /// Tránh giữ singleton cũ làm app tiếp tục dùng token hoặc Agent trước đó.
   XiaozhiService({
@@ -188,6 +197,7 @@ class XiaozhiService {
 
   /// 断开Dịch vụ Xiaozhi连接
   Future<void> disconnect() async {
+    discardResponseGate();
     if (!_isConnected || _webSocketManager == null) return;
 
     try {
@@ -474,6 +484,7 @@ class XiaozhiService {
 
       case XiaozhiEventType.disconnected:
         _isConnected = false;
+        discardResponseGate();
         _dispatchEvent(
           XiaozhiServiceEvent(XiaozhiServiceEventType.disconnected, null),
         );
@@ -484,10 +495,14 @@ class XiaozhiService {
         break;
 
       case XiaozhiEventType.binaryMessage:
-        // 处理二进制音频数据 - 简化直接播放
-        final audioData = event.data as List<int>;
-        if (!_suppressIncomingAudio) {
-          AudioUtil.playOpusData(Uint8List.fromList(audioData));
+        final audioData = Uint8List.fromList(event.data as List<int>);
+        if (_responseGateActive) {
+          // Giới hạn buffer để không tăng RAM vô hạn nếu server lỗi protocol.
+          if (_gatedAudioFrames.length < 320) {
+            _gatedAudioFrames.add(audioData);
+          }
+        } else if (!_suppressIncomingAudio) {
+          AudioUtil.playOpusData(audioData);
         }
         break;
 
@@ -505,8 +520,11 @@ class XiaozhiService {
       if (message is String) {
         _handleTextMessage(message);
       } else if (message is List<int>) {
-        if (!_suppressIncomingAudio) {
-          AudioUtil.playOpusData(Uint8List.fromList(message));
+        final audioData = Uint8List.fromList(message);
+        if (_responseGateActive) {
+          if (_gatedAudioFrames.length < 320) _gatedAudioFrames.add(audioData);
+        } else if (!_suppressIncomingAudio) {
+          AudioUtil.playOpusData(audioData);
         }
       }
     } catch (e) {
@@ -563,9 +581,13 @@ class XiaozhiService {
 
           if (state == 'sentence_start' && text.isNotEmpty) {
             print('$TAG: 收到TTS句子: $text');
-            _dispatchEvent(
-              XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, text),
-            );
+            if (_responseGateActive) {
+              _gatedTtsSentences.add(text);
+            } else {
+              _dispatchEvent(
+                XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, text),
+              );
+            }
           }
           break;
 
@@ -623,6 +645,63 @@ class XiaozhiService {
     } catch (e) {
       print('$TAG: 开始通话Thất bại: $e');
     }
+  }
+
+  /// Chọn đường phát tiếng. Khi true, binary TTS của Xiaozhi bị tắt và UI
+  /// dùng UnifiedSpeechOutputService cho cả Agent/Tool để giữ một giọng.
+  void setSuppressIncomingAudio(bool value) {
+    _suppressIncomingAudio = value;
+    if (value) {
+      unawaited(AudioUtil.stopPlaying());
+    }
+  }
+
+  /// Khóa tạm phản hồi Agent cho tới khi STT được Tool Router phân loại.
+  void beginResponseGate() {
+    _responseGateTimer?.cancel();
+    _responseGateActive = true;
+    _gatedAudioFrames.clear();
+    _gatedTtsSentences.clear();
+    // Fail-open: nếu STT không về do mạng, không giữ phản hồi mãi mãi.
+    _responseGateTimer = Timer(const Duration(seconds: 8), () {
+      unawaited(releaseResponseGate());
+    });
+  }
+
+  /// Hội thoại bình thường: mở gate và phát/dispatch phần đã buffer.
+  Future<void> releaseResponseGate() async {
+    if (!_responseGateActive) return;
+    _responseGateTimer?.cancel();
+    _responseGateTimer = null;
+    _responseGateActive = false;
+
+    final sentences = List<String>.from(_gatedTtsSentences);
+    final audioFrames = List<Uint8List>.from(_gatedAudioFrames);
+    _gatedTtsSentences.clear();
+    _gatedAudioFrames.clear();
+
+    for (final text in sentences) {
+      if (text.trim().isNotEmpty) {
+        _dispatchEvent(
+          XiaozhiServiceEvent(XiaozhiServiceEventType.textMessage, text),
+        );
+      }
+    }
+    if (!_suppressIncomingAudio) {
+      for (final frame in audioFrames) {
+        await AudioUtil.playOpusData(frame);
+      }
+    }
+  }
+
+  /// Local tool/command đã nhận câu nói: bỏ mọi phản hồi Agent đã chạy đua
+  /// phía cloud rồi mới abort session.
+  void discardResponseGate() {
+    _responseGateTimer?.cancel();
+    _responseGateTimer = null;
+    _responseGateActive = false;
+    _gatedAudioFrames.clear();
+    _gatedTtsSentences.clear();
   }
 
   /// 中断音频播放

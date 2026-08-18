@@ -5,6 +5,8 @@ import 'package:ai_assistant/providers/config_provider.dart';
 import 'package:ai_assistant/services/xiaozhi_service.dart';
 import 'package:ai_assistant/services/native_speech_service.dart';
 import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
+import 'package:ai_assistant/services/unified_speech_output_service.dart';
+import 'package:ai_assistant/services/voice_output_preferences.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
   const DiagnosticsScreen({super.key});
@@ -19,12 +21,14 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   String _latency = '--';
   String _nativeAsrStatus = 'Chưa kiểm tra';
   String _toolStatus = 'Chưa kiểm tra';
+  String _ttsStatus = 'Chưa kiểm tra';
   bool _testingTools = false;
 
   @override
   void initState() {
     super.initState();
     Future.microtask(_testNativeAsr);
+    Future.microtask(_testStableTts);
   }
 
   Future<void> _testNativeAsr() async {
@@ -41,6 +45,19 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         _nativeAsrStatus = 'Tiếng Việt: ${vi ? "PASS" : "thiếu"} • 中文: ${zh ? "PASS" : "thiếu"}';
       });
     }
+  }
+
+  Future<void> _testStableTts() async {
+    final speech = UnifiedSpeechOutputService.instance;
+    final prefs = VoiceOutputPreferences();
+    final unified = await prefs.useUnifiedVoice();
+    final ready = await speech.initialize(locale: 'vi-VN');
+    if (!mounted) return;
+    setState(() {
+      _ttsStatus = ready
+          ? '${unified ? "Một giọng: BẬT" : "Một giọng: TẮT"} • vi-VN PASS • ${speech.lastVoice.isEmpty ? "voice hệ thống" : speech.lastVoice}'
+          : 'TTS vi-VN không khả dụng';
+    });
   }
 
   Future<void> _testTools() async {
@@ -137,7 +154,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 _PipelineItem('VAD', 'Điều khiển bởi phiên Xiaozhi', Icons.multiline_chart_rounded, provider.xiaozhiConfigs.isNotEmpty),
                 _PipelineItem('ASR', 'Native locale-locked + Xiaozhi fallback', Icons.record_voice_over_rounded, true),
                 _PipelineItem('AGENT', 'Xiaozhi / Dify / MiniMax', Icons.smart_toy_outlined, provider.xiaozhiConfigs.isNotEmpty || provider.difyConfigs.isNotEmpty || provider.minimaxConfigs.isNotEmpty),
-                _PipelineItem('TTS', 'Xiaozhi + TTS thiết bị', Icons.volume_up_rounded, true),
+                _PipelineItem('TTS', 'Unified TTS v4.1 • một hàng đợi • một voice', Icons.volume_up_rounded, !_ttsStatus.contains('không khả dụng')),
               ],
             ),
             const SizedBox(height: 20),
@@ -151,6 +168,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               title: 'ASR ngôn ngữ',
               subtitle: _nativeAsrStatus,
               trailing: TextButton(onPressed: _testNativeAsr, child: const Text('Kiểm tra')),
+            ),
+            _StatusTile(
+              icon: Icons.volume_up_rounded,
+              title: 'Voice Stability / TTS',
+              subtitle: _ttsStatus,
+              trailing: TextButton(onPressed: _testStableTts, child: const Text('Kiểm tra')),
             ),
             _StatusTile(
               icon: Icons.travel_explore_rounded,
@@ -203,7 +226,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Mẹo v4.0: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
+                  'Mẹo v4.1: Realtime Tool Engine phải PASS các core tool trước khi kiểm tra Agent. Với phiên dịch Việt ↔ Trung, mục ASR ngôn ngữ cần PASS cho cả vi-VN và zh-CN. Nếu thiếu zh-CN, cài dịch vụ/giọng nhận dạng tiếng Trung trên Android. Realtime tools và nhạc online được xử lý trong APK trước khi gửi Agent.',
                   style: TextStyle(height: 1.45),
                 ),
               ),

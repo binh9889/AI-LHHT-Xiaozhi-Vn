@@ -41,3 +41,13 @@
 - Có timeout/retry/cache/fallback.
 - Kết quả có source + timestamp.
 - Tool không có nguồn xác minh trả `NEEDS_CONFIGURATION` thay vì số giả.
+
+## 4.1.0+410 – Voice Stability Pro
+
+- Unified TTS cho Agent, Tool, Tool Detail và Interpreter.
+- Stable voice selection/persistence theo locale.
+- Response gate chống Agent/Tool race.
+- Loại bỏ `_suppressAgentRepliesUntil` 4–5 giây gây mất phản hồi tiếp theo.
+- Context-aware ASR normalization cho các lỗi xổ số đã quan sát.
+- Carrier intent nhận câu `098 là mạng nào`.
+- Voice Stability settings + diagnostics.

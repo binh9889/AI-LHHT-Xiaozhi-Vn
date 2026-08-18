@@ -1,4 +1,4 @@
-# AI-LHHT v4.0.1 – Realtime Tools Pro
+# AI-LHHT v4.1.0 – Realtime Tools Pro
 
 AI-LHHT v4 refactor luồng hội thoại theo kiến trúc **Voice → ASR → Intent Router → Tool / Music / Interpreter / Xiaozhi Agent → TTS**. Mục tiêu là không gửi mọi câu hỏi realtime sang Agent rồi chờ Agent tự biết dữ liệu.
 

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:ai_assistant/services/unified_speech_output_service.dart';
 import 'package:ai_assistant/tools/models/tool_models.dart';
 import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
 import 'package:ai_assistant/tools/widgets/tool_result_card.dart';
@@ -20,7 +20,7 @@ class ToolDetailScreen extends StatefulWidget {
 
 class _ToolDetailScreenState extends State<ToolDetailScreen> {
   final RealtimeToolEngine _engine = RealtimeToolEngine();
-  final FlutterTts _tts = FlutterTts();
+  final UnifiedSpeechOutputService _speechOutput = UnifiedSpeechOutputService.instance;
   late final TextEditingController _controller;
   ToolResult? _result;
   bool _loading = false;
@@ -29,7 +29,7 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialQuery ?? '');
-    _tts.awaitSpeakCompletion(true);
+    _speechOutput.initialize(locale: 'vi-VN');
     if ((widget.initialQuery ?? '').trim().isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _run(widget.initialQuery!));
     }
@@ -38,7 +38,7 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
   @override
   void dispose() {
     _controller.dispose();
-    _tts.stop();
+    _speechOutput.stop();
     super.dispose();
   }
 
@@ -59,9 +59,8 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
   Future<void> _speak() async {
     final result = _result;
     if (result == null) return;
-    await _tts.stop();
-    await _tts.setLanguage('vi-VN');
-    await _tts.speak(result.summary);
+    await _speechOutput.stop();
+    await _speechOutput.speak(result.summary, locale: 'vi-VN');
   }
 
   @override

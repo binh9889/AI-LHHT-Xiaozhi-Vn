@@ -21,6 +21,20 @@ void main() {
     expect(router.route('tin tức mới nhất')?.toolId, 'news_latest');
   });
 
+  test('routes carrier phrase observed from voice transcript', () {
+    expect(
+      router.route('số điện thoại đầu 098 là mạng nào')?.toolId,
+      'vn_carrier_lookup',
+    );
+  });
+
+  test('routes repaired lottery phrase observed in runtime', () {
+    expect(
+      router.route('kết quả sổ số miền mắt hôm nay')?.toolId,
+      'vn_lottery',
+    );
+  });
+
   test('extracts crypto symbol and weather location', () {
     final crypto = router.route('Ethereum hôm nay tăng hay giảm?');
     expect(crypto?.parameters['symbol'], 'ETH');

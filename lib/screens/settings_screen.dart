@@ -11,6 +11,7 @@ import 'package:ai_assistant/screens/interpreter_screen.dart';
 import 'package:ai_assistant/screens/xiaozhi_official_setup_screen.dart';
 import 'package:ai_assistant/screens/realtime_tools_screen.dart';
 import 'package:ai_assistant/screens/tool_provider_settings_screen.dart';
+import 'package:ai_assistant/screens/voice_output_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -89,6 +90,16 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
             _NavCard(
+              icon: Icons.record_voice_over_rounded,
+              title: 'Giọng nói ổn định',
+              subtitle: 'Một giọng duy nhất cho Agent + Tool + phiên dịch • chống mất tiếng/đổi giọng',
+              badge: 'Voice Stability v4.1',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const VoiceOutputSettingsScreen()),
+              ),
+            ),
+            _NavCard(
               icon: Icons.monitor_heart_outlined,
               title: 'Chẩn đoán Voice',
               subtitle: 'MIC → VAD → ASR → Agent → Tool → TTS',
@@ -113,8 +124,8 @@ class SettingsScreen extends StatelessWidget {
             const Card(
               child: ListTile(
                 leading: Icon(Icons.verified_outlined),
-                title: Text('AI-LHHT v4.0 Realtime Tools Pro', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('4.0.1+401 • 21 Realtime Tools + Voice Router + Interpreter + Music'),
+                title: Text('AI-LHHT v4.1 Voice Stability Pro', style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('4.1.0+410 • Stable Voice + Response Gate + 21 Realtime Tools + Interpreter + Music'),
               ),
             ),
           ],
