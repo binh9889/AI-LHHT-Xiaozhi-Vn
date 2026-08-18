@@ -1,7 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ai_assistant/tools/services/realtime_tool_engine.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
   test('local lunar tool works without network', () async {
     final engine = RealtimeToolEngine();
     final result = await engine.execute('lunar_calendar', query: 'âm lịch hôm nay');

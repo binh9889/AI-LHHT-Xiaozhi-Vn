@@ -1,3 +1,11 @@
+# PATCH 4.0.1+401 – Build Stability & Routing Fix
+
+- Sửa ToolIntentRouter với cụm tiếng Việt có dấu (`xổ số`, `thời tiết`, `giá vàng`, `tin tức`) không còn rơi nhầm sang Agent do giới hạn ASCII của `\b`.
+- Local Tool Engine không còn phụ thuộc SharedPreferences để chạy lịch âm, mã vùng, nhà mạng và biển số.
+- ToolProviderConfigStore có fallback cấu hình mặc định nếu platform storage tạm thời chưa khả dụng.
+- Bổ sung regression tests cho Unicode routing và mock SharedPreferences cho local engine tests.
+- GitHub Actions build/release metadata nâng lên 4.0.1+401.
+
 # CHANGELOG – AI-LHHT v4.0.0 Realtime Tools Pro
 
 ## Kiến trúc

@@ -69,7 +69,7 @@ class XiaozhiProvisioningResult {
 class XiaozhiProvisioningService {
   static const String officialOtaUrl =
       'https://api.tenclass.net/xiaozhi/ota/';
-  static const String appVersion = '4.0.0';
+  static const String appVersion = '4.0.1';
 
   static Future<XiaozhiProvisioningResult> provision({
     String otaUrl = officialOtaUrl,

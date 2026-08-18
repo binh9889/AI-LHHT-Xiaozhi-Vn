@@ -1,4 +1,4 @@
-# RELEASE STATUS – AI-LHHT v4.0.0
+# RELEASE STATUS – AI-LHHT v4.0.1
 
 > `READY` ở đây nghĩa là implementation/source route đã có nguồn chạy được theo phạm vi ghi rõ. Compile/runtime APK vẫn phải được GitHub Actions xác nhận.
 
@@ -31,3 +31,13 @@
 - `scripts/verify_v4.sh --static-only`: PASS tại thời điểm đóng gói.
 - Flutter compile: CHƯA XÁC NHẬN trong môi trường đóng gói do không có Flutter SDK.
 - GitHub Actions là gate compile/test chính thức.
+
+## Patch 4.0.1 build fix
+
+Ba lỗi unit test quan sát trên GitHub Actions đã được xử lý ở tầng production code, không chỉ sửa assertion:
+
+- Tool router: Unicode-safe matching cho tiếng Việt có dấu.
+- Local engine: không cần persistent config để chạy local-only tools.
+- Preferences: fallback an toàn + mock deterministic trong test.
+
+Trạng thái compile APK vẫn phải được xác nhận bởi GitHub Actions sau khi người dùng push patch này.

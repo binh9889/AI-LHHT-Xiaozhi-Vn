@@ -13,6 +13,14 @@ void main() {
     expect(router.route('tin nóng hôm nay')?.toolId, 'news_latest');
   });
 
+  test('Vietnamese accented phrases are routed with Unicode-safe boundaries', () {
+    expect(router.route('xổ số miền Bắc hôm nay')?.toolId, 'vn_lottery');
+    expect(router.route('thời tiết Hà Nội')?.toolId, 'weather');
+    expect(router.route('giá vàng hôm nay')?.toolId, 'gold_price');
+    expect(router.route('lãi suất ngân hàng')?.toolId, 'vn_bank_interest');
+    expect(router.route('tin tức mới nhất')?.toolId, 'news_latest');
+  });
+
   test('extracts crypto symbol and weather location', () {
     final crypto = router.route('Ethereum hôm nay tăng hay giảm?');
     expect(crypto?.parameters['symbol'], 'ETH');

@@ -32,12 +32,19 @@ class ToolProviderConfigStore {
   static const _sportsDbKey = 'v4_tools_sportsdb_key';
 
   Future<ToolProviderConfig> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    return ToolProviderConfig(
-      bridgeUrl: prefs.getString(_bridgeUrlKey) ?? '',
-      bridgeToken: prefs.getString(_bridgeTokenKey) ?? '',
-      sportsDbKey: prefs.getString(_sportsDbKey) ?? '123',
-    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return ToolProviderConfig(
+        bridgeUrl: prefs.getString(_bridgeUrlKey) ?? '',
+        bridgeToken: prefs.getString(_bridgeTokenKey) ?? '',
+        sportsDbKey: prefs.getString(_sportsDbKey) ?? '123',
+      );
+    } catch (_) {
+      // Local tools (lunar calendar, area code, carrier, plate lookup) must
+      // remain usable even when SharedPreferences is unavailable, e.g. during
+      // early app startup, platform-channel recovery or pure unit tests.
+      return const ToolProviderConfig();
+    }
   }
 
   Future<void> save(ToolProviderConfig config) async {

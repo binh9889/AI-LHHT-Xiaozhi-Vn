@@ -92,7 +92,20 @@ class ToolIntentRouter {
     return null;
   }
 
-  bool _matches(String input, String source) => RegExp(source, caseSensitive: false).hasMatch(input);
+  bool _matches(String input, String source) {
+    // Dart/ECMAScript `\\b` is not reliable around Vietnamese letters such as
+    // “ố”, “ế”, “ộ”. That made valid intents like “xổ số” and “thời tiết”
+    // intermittently miss the realtime router and fall through to Agent.
+    // Try the strict expression first, then a phrase-safe version without the
+    // ASCII word-boundary markers. The expressions themselves are specific
+    // enough that this fallback does not broaden routing to arbitrary text.
+    if (RegExp(source, caseSensitive: false, unicode: true).hasMatch(input)) {
+      return true;
+    }
+    final vietnameseSafe = source.replaceAll(r'\b', '');
+    return RegExp(vietnameseSafe, caseSensitive: false, unicode: true)
+        .hasMatch(input);
+  }
 
   String _cryptoSymbol(String q) {
     if (q.contains('ethereum') || RegExp(r'\beth\b').hasMatch(q)) return 'ETH';

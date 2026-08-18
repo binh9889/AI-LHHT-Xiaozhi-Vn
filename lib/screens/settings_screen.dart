@@ -114,7 +114,7 @@ class SettingsScreen extends StatelessWidget {
               child: ListTile(
                 leading: Icon(Icons.verified_outlined),
                 title: Text('AI-LHHT v4.0 Realtime Tools Pro', style: TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('4.0.0+400 • 21 Realtime Tools + Voice Router + Interpreter + Music'),
+                subtitle: Text('4.0.1+401 • 21 Realtime Tools + Voice Router + Interpreter + Music'),
               ),
             ),
           ],

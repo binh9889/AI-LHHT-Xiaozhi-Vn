@@ -45,13 +45,32 @@ class RealtimeToolEngine {
     final cached = _cache.get(cacheKey);
     if (cached != null) return cached;
 
-    final config = await _configStore.load();
-    final result = await _providers.execute(route.toolId, query, route.parameters, config);
+    final config = _isLocalTool(route.toolId)
+        ? const ToolProviderConfig()
+        : await _configStore.load();
+    final result = await _providers.execute(
+      route.toolId,
+      query,
+      route.parameters,
+      config,
+    );
     if (result.success) {
       _cache.put(cacheKey, result, _ttlFor(route.toolId));
     }
     await _saveHistory(query, result);
     return result;
+  }
+
+  bool _isLocalTool(String toolId) {
+    switch (toolId) {
+      case 'lunar_calendar':
+      case 'vn_area_code':
+      case 'vn_carrier_lookup':
+      case 'vn_plate_lookup':
+        return true;
+      default:
+        return false;
+    }
   }
 
   Duration _ttlFor(String toolId) {
